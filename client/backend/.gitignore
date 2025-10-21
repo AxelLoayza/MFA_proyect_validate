@@ -1,9 +1,7 @@
 **/*_private.pem
 **/keys/*.pem
 !**/.gitkeep
-
+src/keys/*.pem
 
 .env
-
-
 node_modules/
