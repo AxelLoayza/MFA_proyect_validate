@@ -1,0 +1,9 @@
+**/*_private.pem
+**/keys/*.pem
+!**/.gitkeep
+
+
+.env
+
+
+node_modules/
