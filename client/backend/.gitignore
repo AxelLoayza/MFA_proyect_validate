@@ -1,9 +1,49 @@
+# Environment variables
+.env
+.env.*
+!.env.example
+
+# JWT and Security Keys
 **/*_private.pem
 **/keys/*.pem
 !**/.gitkeep
+src/keys/*.pem
 
+# Configuration files with sensitive data
+**/config/cloud_keys.js
 
-.env
+# Development & Test Scripts
+/src/scripts/test_dev_step_up.js
+/src/scripts/seed_db.js
+/src/scripts/inspect_db.js
+/src/scripts/list_tables.js
 
-
+# Dependency directories
 node_modules/
+/src/scripts/test_dev_step_up.js    # script de prueba con credenciales
+/src/scripts/seed_db.js             # datos de prueba
+/src/scripts/inspect_db.js          # herramienta de desarrollo
+/src/scripts/list_tables.js         # herramienta de desarrollo
+
+
+# Logs
+logs
+*.log
+npm-debug.log*
+
+# Runtime data
+pids
+*.pid
+*.seed
+*.pid.lock
+
+# Cache directories
+.npm
+.eslintcache
+
+# Optional REPL history
+.node_repl_history
+
+# Test coverage
+coverage/
+.nyc_output/
