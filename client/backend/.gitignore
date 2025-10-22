@@ -20,7 +20,11 @@ src/keys/*.pem
 
 # Dependency directories
 node_modules/
-scripts/
+/src/scripts/test_dev_step_up.js    # script de prueba con credenciales
+/src/scripts/seed_db.js             # datos de prueba
+/src/scripts/inspect_db.js          # herramienta de desarrollo
+/src/scripts/list_tables.js         # herramienta de desarrollo
+
 
 # Logs
 logs
