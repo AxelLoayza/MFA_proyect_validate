@@ -1,218 +1,320 @@
-# Prototipo de Auditoría Biométrica - Cliente Flutter
+# Frontend MFA - Auditoria Biométrica
 
-## 📱 Descripción del Proyecto
+Interfaz Flutter para autenticación multi-factor con captura de firma biométrica digital.
 
-Este proyecto forma parte de una tesis de ingeniería cuyo objetivo es desarrollar un **Prototipo de Auditoría Biométrica mediante Análisis Adaptativo de Trazos Dinámicos**.
+## 🎯 Objetivo
 
-### 🎯 Problema a Resolver
-Los métodos de autenticación estáticos (contraseñas, PINs) son vulnerables a ataques como phishing y robo de credenciales.
+Proporcionar una interfaz de usuario intuitiva que permita:
+1. **Autenticación básica** con email/contraseña (ARC 0.5)
+2. **Captura de firma biométrica** en tiempo real
+3. **Envío de datos de trazo** al backend para validación
 
-### 💡 Solución Implementada
-Implementar una capa de seguridad biométrica conductual que analice el ritmo y la cadencia del trazo (firma o gesto) del usuario en dispositivos móviles para validar la identidad, incluso si la contraseña es robada.
-
-## 🏗️ Arquitectura del Sistema
-
-El sistema completo se divide en tres partes:
-
-1. **Cliente (Flutter)** - Este proyecto 📱
-   - Captura el trazo biométrico del usuario
-   - Implementa autenticación OAuth2 con Google
-   - Envía datos por JSON al microservicio
-
-2. **Microservicio (FastAPI)** - No implementado en esta fase
-   - Recibe los datos del cliente
-   - Preprocesa la secuencia para ML
-
-3. **Modelo de Inferencia (LSTM)** - No implementado en esta fase
-   - Analiza la serie temporal del trazo
-   - Emite una decisión de seguridad
-
-## 🚀 Funcionalidades Implementadas
-
-### ✅ Autenticación OAuth2 con Google
-- Integración real con Google Sign-In
-- Obtención del `user_id` único e inmutable
-- Manejo de sesiones y logout
-
-### ✅ Captura de Trazo Biométrico
-- Área de dibujo interactiva con `CustomPaint`
-- Captura de coordenadas X, Y y tiempo relativo
-- Visualización en tiempo real del trazo
-- Función de limpiar trazo
-
-### ✅ Comunicación con Microservicio
-- Envío HTTP POST con datos JSON
-- Estructura de datos optimizada para ML
-- Manejo de errores y respuestas
-
-### ✅ Interfaz de Usuario Moderna
-- Diseño basado en el prototipo de Figma
-- Esquinas redondeadas y colores modernos
-- Responsive y accesible
-- Estados de carga y feedback visual
-
-## 📁 Estructura del Proyecto
+## 🏗️ Estructura del Proyecto
 
 ```
-frond_end_tesis/
+frontend/
 ├── lib/
-│   ├── main.dart              # Punto de entrada de la aplicación
-│   └── login_screen.dart      # Pantalla principal con toda la funcionalidad
-├── pubspec.yaml               # Dependencias del proyecto
-└── README.md                  # Este archivo
+│   ├── main.dart                # Punto de entrada de la aplicación
+│   └── login_screen.dart        # Pantalla principal de autenticación MFA
+├── pubspec.yaml                 # Dependencias del proyecto
+├── android/                     # Configuración Android
+├── ios/                         # Configuración iOS
+├── web/                         # Configuración Web
+├── windows/                     # Configuración Windows
+├── macos/                       # Configuración macOS
+├── linux/                       # Configuración Linux
+└── README.md                    # Este archivo
 ```
 
-## 🔧 Dependencias
+## 📦 Dependencias
 
 ```yaml
 dependencies:
   flutter:
     sdk: flutter
-  cupertino_icons: ^1.0.8
-  google_sign_in: ^6.2.1      # Autenticación OAuth2
-  http: ^1.2.0                # Cliente HTTP
-  json_annotation: ^4.8.1     # Manejo de JSON
+  http: ^1.2.0                   # Peticiones HTTP al backend
+  json_annotation: ^4.8.0        # Anotaciones JSON para serialización
 ```
 
-## 📊 Estructura de Datos
+## 🚀 Funcionalidades Implementadas
 
-### StrokePoint
+### 1. **Autenticación Base (ARC 0.5)**
+- Login con email/contraseña
+- Validación contra PostgreSQL backend
+- Generación de token temporal (TTL: 120s)
+- Transición automática a captura biométrica
+
+### 2. **Captura de Firma Biométrica**
+- Canvas interactivo para dibujar firma
+- Captura de puntos en tiempo real (x, y, timestamp)
+- Visualización instantánea del trazo (sin retraso)
+- Botones: Limpiar, Volver, Enviar Firma
+
+### 3. **Envío de Datos de Trazo**
+- JSON estructurado con datos de firma
+- Timestamp de envío
+- Array de puntos del trazo (x, y, t)
+- Duración total del trazo
+
+## 📱 Interfaz de Usuario
+
+### Paso 1: Login (ARC 0.5)
+```
+┌─────────────────────────────┐
+│ MFA - Autenticación         │
+│                             │
+│ Iniciar Sesión              │
+│                             │
+│ [📧 Email input]            │
+│ [🔐 Contraseña input]       │
+│                             │
+│ [Iniciar Sesión]            │
+└─────────────────────────────┘
+```
+
+### Paso 2: Firma Biométrica
+```
+┌─────────────────────────────┐
+│ MFA - Autenticación    ARC 0.5
+│                             │
+│ Firma Biométrica            │
+│                             │
+│ ┌──────────────────────────┐│
+│ │      [Canvas Area]       ││
+│ │    (Dibuja tu firma)     ││
+│ │                          ││
+│ └──────────────────────────┘│
+│                             │
+│ [Limpiar] [Volver] [Enviar] │
+└─────────────────────────────┘
+```
+
+### Paso 3: Completado
+```
+┌─────────────────────────────┐
+│ MFA - Autenticación         │
+│                             │
+│ ✅ Autenticación Exitosa    │
+│                             │
+│ Token ARC: 0.5              │
+│                             │
+│ [Nueva Autenticación]       │
+└─────────────────────────────┘
+```
+
+## 🔄 Flujo de Autenticación
+
+```
+┌──────────────────────────────────────────────────────┐
+│                  FLUJO MFA COMPLETO                   │
+├──────────────────────────────────────────────────────┤
+│                                                       │
+│ 1. Usuario ingresa email + contraseña                │
+│    ↓                                                  │
+│    POST /auth/login                                  │
+│    ↓                                                  │
+│    ✅ Recibe: access_token, arc: "0.5"              │
+│    ↓                                                  │
+│ 2. Usuario dibuja firma en canvas                    │
+│    ↓                                                  │
+│    Captura: [x, y, t] puntos en tiempo real         │
+│    ↓                                                  │
+│ 3. Envío de datos de trazo                          │
+│    ↓                                                  │
+│    POST /auth/step-up                               │
+│    Body: {                                           │
+│      "timestamp": "2025-10-23T...",                 │
+│      "stroke_points": [                             │
+│        {"x": 100, "y": 200, "t": 0},               │
+│        {"x": 110, "y": 210, "t": 50},              │
+│        ...                                           │
+│      ],                                              │
+│      "stroke_duration_ms": 1234                     │
+│    }                                                 │
+│    ↓                                                  │
+│    ⏸️ Espera validación del backend                 │
+│                                                       │
+└──────────────────────────────────────────────────────┘
+```
+
+## 🎨 Componentes Principales
+
+### `StrokePoint`
+Clase que representa un punto del trazo biométrico.
 ```dart
 class StrokePoint {
-  final double x;  // Coordenada X
-  final double y;  // Coordenada Y  
-  final int t;     // Tiempo relativo en milisegundos
+  final double x;      // Coordenada X en píxeles
+  final double y;      // Coordenada Y en píxeles
+  final int t;         // Tiempo relativo en milisegundos desde inicio del trazo
+  
+  Map<String, dynamic> toJson() {
+    return {'x': x, 'y': y, 't': t};
+  }
 }
 ```
 
-### Payload JSON Enviado al Microservicio
+### `StrokePainter`
+CustomPainter que dibuja el trazo en tiempo real.
+```dart
+class StrokePainter extends CustomPainter {
+  final List<StrokePoint> points;
+  
+  void paint(Canvas canvas, Size size) {
+    // Dibuja líneas conectando todos los puntos
+    // Actualización inmediata (shouldRepaint siempre retorna true)
+  }
+}
+```
+
+### `LoginResponse`
+Modelo para parsear respuesta del backend.
+```dart
+class LoginResponse {
+  final String accessToken;
+  final String arc;           // "0.5"
+  final String userId;
+  final int expiresIn;       // TTL en segundos
+}
+```
+
+### `_LoginScreenState`
+State principal que maneja:
+- Campos de login (email, contraseña)
+- Captura de trazo (_strokePoints, _strokeStartTime)
+- Tokens (_tempToken)
+- Estado de autenticación (_authStep: 1/2/3)
+
+## 📤 Datos Enviados al Backend
+
+### POST /auth/login
+**Request:**
 ```json
 {
-  "user_id": "google_user_id_unique",
-  "stroke_data": [
-    {"x": 100.0, "y": 150.0, "t": 0},
-    {"x": 105.0, "y": 155.0, "t": 50},
-    {"x": 110.0, "y": 160.0, "t": 100}
-  ],
-  "timestamp": "2024-01-15T10:30:00.000Z"
+  "email": "test@example.com",
+  "password": "password123"
 }
 ```
 
-## 🛠️ Configuración y Ejecución
-
-### Prerrequisitos
-- Flutter SDK 3.9.0 o superior
-- Android Studio / VS Code
-- Cuenta de Google para OAuth2
-
-### Pasos de Instalación
-
-1. **Clonar el proyecto**
-   ```bash
-   cd frond_end_tesis
-   ```
-
-2. **Instalar dependencias**
-   ```bash
-   flutter pub get
-   ```
-
-3. **Configurar Google Sign-In**
-   - Crear proyecto en [Google Cloud Console](https://console.cloud.google.com/)
-   - Habilitar Google Sign-In API
-   - Configurar OAuth2 credentials
-   - Actualizar `android/app/google-services.json`
-
-4. **Ejecutar la aplicación**
-   ```bash
-   flutter run
-   ```
-
-## 🔐 Flujo de Autenticación
-
-1. **Inicio de Sesión con Google**
-   - Usuario presiona "Continuar con Google"
-   - Se obtiene el `user_id` único de OAuth2
-   - Este ID se usa como identificador biométrico
-
-2. **Captura Biométrica**
-   - Usuario dibuja su gesto/firma en el área designada
-   - Se capturan coordenadas y tiempos relativos
-   - Visualización en tiempo real
-
-3. **Validación**
-   - Datos se envían al microservicio
-   - Microservicio compara con patrón almacenado
-   - Respuesta de autorización/denegación
-
-## 🌐 Endpoint del Microservicio
-
-```
-POST http://<IP_del_Microservicio>:<Puerto>/api/auth/validate
-Content-Type: application/json
-
+**Response:**
+```json
 {
-  "user_id": "string",
-  "stroke_data": [StrokePoint],
-  "timestamp": "ISO8601"
+  "access_token": "eyJhbGc...",
+  "token_type": "Bearer",
+  "arc": "0.5",
+  "userId": "39271eab-cc7e-4b93-92fe-28d9fddd2ba7",
+  "expires_in": 120
 }
 ```
 
-## 🎨 Diseño Visual
+### POST /auth/step-up
+**Request:** (con Authorization header)
+```json
+{
+  "timestamp": "2025-10-23T16:45:32.123Z",
+  "stroke_points": [
+    {"x": 450, "y": 350, "t": 0},
+    {"x": 460, "y": 355, "t": 10},
+    {"x": 470, "y": 360, "t": 20},
+    {"x": 480, "y": 365, "t": 30}
+  ],
+  "stroke_duration_ms": 2500
+}
+```
 
-- **Colores principales**: Teal (#0D9488), Grises modernos
-- **Tipografía**: Roboto, pesos 400-600
-- **Componentes**: Esquinas redondeadas, sombras sutiles
-- **Responsive**: Adaptable a diferentes tamaños de pantalla
+## 🔧 Configuración
 
-## 🔍 Características Técnicas
+### URL del Backend
+Definida en `login_screen.dart`:
+```dart
+static const String backendUrl = 'http://localhost:4000';
+```
 
-### Captura de Trazo
-- `GestureDetector` para eventos táctiles
-- `CustomPaint` para renderizado
-- Algoritmo de suavizado de trazos
-- Normalización de coordenadas
+**Para cambiar a producción:**
+```dart
+static const String backendUrl = 'https://api.production.com';
+```
 
-### Manejo de Estado
-- `StatefulWidget` para gestión de estado
-- Variables reactivas para UI
-- Manejo de estados de carga
-- Persistencia de sesión
+## 🎯 Estados de Autenticación
 
-### Comunicación HTTP
-- Cliente HTTP asíncrono
-- Manejo de errores robusto
-- Timeouts configurables
-- Serialización JSON automática
+| _authStep | Descripción | Pantalla |
+|-----------|-------------|---------|
+| 1 | Login form | Formulario email/contraseña |
+| 2 | Canvas signature | Área de firma biométrica |
+| 3 | Success | Mensaje de éxito |
 
-## 🚧 Limitaciones Actuales
+## 🖌️ Personalización de Estilos
 
-- **Microservicio**: No implementado (simulado)
-- **Modelo ML**: No implementado
-- **Persistencia**: Solo en memoria
-- **Validación**: Básica de entrada
+### Colores principales (Teal)
+```dart
+const Color(0xFF0D9488)  // Teal principal
+const Color(0xFF1F2937)  // Gris oscuro (trazo)
+const Color(0xFFE5E7EB)  // Gris claro (bordes)
+```
 
-## 🔮 Próximos Pasos
+### Dimensiones del Canvas
+```dart
+height: 240,  // Alto del área de firma
+```
 
-1. Implementar microservicio FastAPI
-2. Desarrollar modelo LSTM
-3. Añadir persistencia de datos
-4. Implementar validación avanzada
-5. Añadir métricas de seguridad
+### Grosor del trazo
+```dart
+strokeWidth: 2.5
+```
 
-## 📝 Notas de Desarrollo
+## 📊 Características de Captura
 
-- El código está documentado en español para facilitar la comprensión
-- Se incluyen comentarios explicativos en funciones críticas
-- La estructura es modular y extensible
-- Compatible con Flutter 3.9.0+
+- **Resolución**: Captura cada movimiento del mouse/dedo
+- **Precisión**: Coordenadas en píxeles (0-1920, 0-1080 según pantalla)
+- **Timing**: Milisegundos desde inicio del trazo
+- **Validación**: Solo captura dentro del área del canvas (0-240px altura)
 
-## 👨‍💻 Autor
+## 🧪 Prueba Local
 
-Proyecto desarrollado como parte de una tesis de ingeniería en sistemas.
+```bash
+# Ejecutar en web
+flutter run -d web --web-port=8080
 
----
+# Ejecutar en Android
+flutter run -d android
 
-**Versión**: 1.0.0  
-**Última actualización**: Enero 2024  
-**Flutter**: 3.9.0+
+# Ejecutar en iOS
+flutter run -d ios
+```
+
+## 📱 Plataformas Soportadas
+
+✅ Web (Chrome, Firefox, Safari, Edge)
+✅ Android
+✅ iOS
+✅ Windows
+✅ macOS
+✅ Linux
+
+## 🔐 Seguridad
+
+- ✅ Contraseñas nunca se almacenan localmente
+- ✅ Token guardado en memoria volátil (no persistente)
+- ✅ HTTPS recomendado para producción
+- ✅ CORS habilitado para desarrollo local
+
+## 🚀 Próximas Mejoras
+
+- [ ] Persistencia de token con SharedPreferences
+- [ ] Refresh token logic
+- [ ] Modo offline
+- [ ] Biometric fingerprint validation
+- [ ] Animaciones mejoradas
+- [ ] Soporte para múltiples idiomas
+
+## 📚 Referencias
+
+- [Flutter Documentation](https://flutter.dev/docs)
+- [HTTP Package](https://pub.dev/packages/http)
+- [Canvas Drawing](https://api.flutter.dev/flutter/dart-ui/Canvas-class.html)
+- [GestureDetector](https://api.flutter.dev/flutter/widgets/GestureDetector-class.html)
+
+## 👨‍💻 Desarrollador
+
+Proyecto de autenticación multi-factor con firma biométrica digital.
+
+**Estado:** En desarrollo - Frontend completado para envío de datos de trazo
