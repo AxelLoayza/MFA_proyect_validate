@@ -6,12 +6,19 @@ async function login(req, res, next) {
   try {
     const { email, password } = req.body;
     const result = await authService.login(email, password);
+    
+    // Decodificar token para extraer login_id y nonce (necesarios para Flutter)
+    const jwt = require('jsonwebtoken');
+    const decoded = jwt.decode(result.token);
+    
     res.status(200).json({
       access_token: result.token,
       token_type: 'Bearer',
       arc: '0.5',
       userId: result.user.id,
       expires_in: parseInt(process.env.TEMP_TOKEN_TTL_SECONDS || '120', 10),
+      login_id: decoded.login_id,  // Para vincular con step-up
+      nonce: decoded.nonce          // Para validar assertion biométrico
     });
   } catch (err) {
     next(err);

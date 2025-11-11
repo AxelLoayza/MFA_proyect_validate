@@ -17,11 +17,20 @@ try {
 
 const ISS = process.env.JWT_ISSUER || 'LocalAzure';
 const ALGO = process.env.JWT_ALGO || 'RS256';
+const { v4: uuidv4 } = require('uuid');
 
 function signTempToken(payload = {}) {
   const ttl = parseInt(process.env.TEMP_TOKEN_TTL_SECONDS || '120', 10);
+  const jti = `temp_${uuidv4()}`;
+  
   return jwt.sign(
-    { iss: ISS, ...payload, arc: '0.5' },
+    { 
+      iss: ISS, 
+      ...payload, 
+      arc: '0.5',
+      jti,  // JWT ID único para prevenir replay attacks
+      aud: 'node-backend'  // Audience específico
+    },
     PRIV_KEY,
     { algorithm: ALGO, expiresIn: `${ttl}s` }
   );
@@ -29,8 +38,18 @@ function signTempToken(payload = {}) {
 
 function signFinalToken({ userId, role = 'user', customClaims = {} } = {}) {
   const ttl = parseInt(process.env.FINAL_TOKEN_TTL_SECONDS || '900', 10);
+  const jti = `final_${uuidv4()}`;
+  
   return jwt.sign(
-    { iss: ISS, sub: userId, role, arc: '1.0', ...customClaims },
+    { 
+      iss: ISS, 
+      sub: userId, 
+      role, 
+      arc: '1.0', 
+      jti,  // JWT ID único
+      aud: ['node-backend', 'flutter-app'],  // Multiple audiences
+      ...customClaims 
+    },
     PRIV_KEY,
     { algorithm: ALGO, expiresIn: `${ttl}s` }
   );

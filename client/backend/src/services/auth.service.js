@@ -90,8 +90,37 @@ async function stepUp({ signedAssertion }) {
     throw error;
   }
 
-  // issue final token
-  const finalToken = TokenService.signFinalToken({ userId, role: session.role || 'user' });
+  // Register biometric validation in audit system
+  const validationId = `bio_val_${uuidv4()}`;
+  await pool.query(
+    `SELECT register_biometric_validation($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+    [
+      userId,                  // p_user_id
+      loginId,                 // p_login_session_id
+      validationId,            // p_validation_id
+      nonce,                   // p_nonce
+      'accepted',              // p_decision
+      score,                   // p_confidence_score
+      signedAssertion,         // p_assertion_jws (JWS completo)
+      JSON.stringify(payload), // p_assertion_claims
+      null,                    // p_device_fingerprint (agregar desde request si está disponible)
+      null                     // p_ip_address (agregar desde request si está disponible)
+    ]
+  );
+
+  // issue final token with validation_id
+  const finalToken = TokenService.signFinalToken({ 
+    userId, 
+    role: session.role || 'user',
+    customClaims: {
+      validation_id: validationId,  // Link to biometric validation
+      biometric: {
+        verified_at: new Date().toISOString(),
+        score,
+        method: 'cloud-scoring'
+      }
+    }
+  });
 
   // update session
   await pool.query(
@@ -99,7 +128,7 @@ async function stepUp({ signedAssertion }) {
     [finalToken, loginId]
   );
 
-  logger.info(`Login session ${loginId} completed for user ${userId} (score=${score})`);
+  logger.info(`Login session ${loginId} completed for user ${userId} (score=${score}, validation_id=${validationId})`);
 
   return finalToken;
 }
@@ -140,6 +169,29 @@ async function devStepUp({ login_id, score = 0, confidence = 0.9 }) {
     throw error;
   }
 
+  // Register biometric validation in audit system (dev mode)
+  const validationId = `dev_bio_${uuidv4()}`;
+  await pool.query(
+    `SELECT register_biometric_validation($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+    [
+      session.user_id,         // p_user_id
+      login_id,                // p_login_session_id
+      validationId,            // p_validation_id
+      session.nonce,           // p_nonce
+      'accepted',              // p_decision
+      score,                   // p_confidence_score
+      null,                    // p_assertion_jws (null en modo dev)
+      JSON.stringify({         // p_assertion_claims
+        dev_mode: true,
+        score,
+        confidence,
+        method: 'dev-simulated'
+      }),
+      null,                    // p_device_fingerprint
+      null                     // p_ip_address
+    ]
+  );
+
   // issue final token with arc=2 and amr including bio
   const finalToken = TokenService.signFinalToken({
     userId: session.user_id,
@@ -147,6 +199,7 @@ async function devStepUp({ login_id, score = 0, confidence = 0.9 }) {
     customClaims: {
       arc: '2',
       amr: ['pwd', 'bio'],
+      validation_id: validationId,  // Link to validation
       biometric: {
         verified_at: new Date().toISOString(),
         score,
@@ -157,7 +210,7 @@ async function devStepUp({ login_id, score = 0, confidence = 0.9 }) {
   });
 
   await sessionModel.markSessionCompleted(login_id, finalToken);
-  logger.info(`Dev step-up completed for login ${login_id}`);
+  logger.info(`Dev step-up completed for login ${login_id} (validation_id=${validationId})`);
 
   return finalToken;
 }

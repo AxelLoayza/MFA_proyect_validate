@@ -1,38 +1,74 @@
-# Environment variables
+# ============================================================================
+# SECURITY-CRITICAL FILES - NEVER COMMIT
+# ============================================================================
+
+# Environment variables with credentials
 .env
 .env.*
 !.env.example
 
-# JWT and Security Keys
+# JWT and Security Keys (Private keys)
 **/*_private.pem
 **/keys/*.pem
 !**/.gitkeep
 src/keys/*.pem
+src/keys/jwt_private.pem
 
 # Configuration files with sensitive data
 **/config/cloud_keys.js
+**/config/database.js
+src/config/cloud_keys.js
 
-# Development & Test Scripts
-/src/scripts/test_dev_step_up.js
-/src/scripts/seed_db.js
-/src/scripts/inspect_db.js
-/src/scripts/list_tables.js
+# ============================================================================
+# TEST & DEVELOPMENT SCRIPTS - CONTAIN CREDENTIALS/SENSITIVE DATA
+# ============================================================================
+
+# Test scripts that use real credentials
+src/scripts/test_dev_step_up.js
+src/scripts/test_login_complete.js
+src/scripts/test_audit_system.js
+src/scripts/test_login_response.js
+src/scripts/verify_restoration.js
+
+# Database setup scripts with test data
+src/scripts/seed_db.js
+src/scripts/init_db.js
+
+# Database inspection scripts (may expose structure)
+src/scripts/inspect_db.js
+src/scripts/inspect_current_db.js
+src/scripts/list_tables.js
+src/scripts/check_id_types.js
+src/scripts/ensure_login_sessions_integer.js
+
+# Migration application scripts (contain credentials)
+src/scripts/apply_audit_migration.js
+
+# ============================================================================
+# DOCUMENTATION WITH SENSITIVE INFO
+# ============================================================================
+
+# Reports that may contain credentials or internal architecture
+**/ANALISIS_FUNCIONALIDADES_PERDIDAS.md
+**/RESTAURACION_COMPLETADA.md
+**/FLUTTER_COMPATIBILITY_REPORT.md
+
+# ============================================================================
+# STANDARD EXCLUSIONS
+# ============================================================================
 
 # Dependency directories
 node_modules/
-/src/scripts/test_dev_step_up.js    # script de prueba con credenciales
-/src/scripts/seed_db.js             # datos de prueba
-/src/scripts/inspect_db.js          # herramienta de desarrollo
-/src/scripts/list_tables.js         # herramienta de desarrollo
-
 
 # Logs
-logs
+logs/
 *.log
 npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
 
 # Runtime data
-pids
+pids/
 *.pid
 *.seed
 *.pid.lock
@@ -40,6 +76,7 @@ pids
 # Cache directories
 .npm
 .eslintcache
+.cache/
 
 # Optional REPL history
 .node_repl_history
@@ -47,3 +84,19 @@ pids
 # Test coverage
 coverage/
 .nyc_output/
+
+# Build outputs
+dist/
+build/
+
+# IDE specific files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS specific files
+.DS_Store
+Thumbs.db
+desktop.ini
