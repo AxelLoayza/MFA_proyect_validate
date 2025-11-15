@@ -3,16 +3,18 @@ import 'package:http/http.dart' as http;
 import 'dart:convert';
 
 /// Clase para representar un punto del trazo biométrico
-/// Captura coordenadas x, y y tiempo relativo en milisegundos
+/// Captura coordenadas x, y, tiempo relativo en milisegundos y presión
 class StrokePoint {
   final double x;
   final double y;
   final int t; // Tiempo relativo en milisegundos desde el inicio del trazo
+  final double p; // Presión normalizada (0.0 a 1.0)
 
   StrokePoint({
     required this.x,
     required this.y,
     required this.t,
+    required this.p,
   });
 
   /// Convierte el punto a JSON para envío al microservicio
@@ -21,6 +23,7 @@ class StrokePoint {
       'x': x,
       'y': y,
       't': t,
+      'p': p,
     };
   }
 }
@@ -262,7 +265,8 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   /// Gestiona eventos del trazo biométrico
-  void _onPanStart(DragStartDetails details) {
+  /// Captura el inicio del trazo con presión real desde PointerEvent
+  void _onPointerDown(PointerDownEvent event) {
     if (_tempToken == null) {
       _showMessage('Primero debes iniciar sesión');
       return;
@@ -273,27 +277,32 @@ class _LoginScreenState extends State<LoginScreen> {
       _strokeStartTime = DateTime.now();
       _strokePoints.clear();
 
-      // Usar localPosition directamente (relativo al GestureDetector)
-      final x = details.localPosition.dx;
-      final y = details.localPosition.dy;
+      final x = event.localPosition.dx;
+      final y = event.localPosition.dy;
+      // Presión real: rango 0.0 a 1.0+ dependiendo del dispositivo
+      final pressure = event.pressure.clamp(0.0, 1.0);
 
-      // Validar que el punto está dentro del área del canvas (0-240 altura, ancho flexible)
+      // Validar que el punto está dentro del área del canvas
       if (x >= 0 && y >= 0 && y <= 240) {
         _strokePoints.add(StrokePoint(
           x: x,
           y: y,
           t: 0,
+          p: pressure,
         ));
       }
     });
   }
 
-  void _onPanUpdate(DragUpdateDetails details) {
+  /// Captura movimiento del trazo con presión real en cada punto
+  void _onPointerMove(PointerMoveEvent event) {
     if (!_isDrawing || _strokeStartTime == null) return;
 
     final timeDiff = DateTime.now().difference(_strokeStartTime!).inMilliseconds;
-    final x = details.localPosition.dx;
-    final y = details.localPosition.dy;
+    final x = event.localPosition.dx;
+    final y = event.localPosition.dy;
+    // Presión real del stylus/touch: se mide en cada movimiento
+    final pressure = event.pressure.clamp(0.0, 1.0);
 
     // Validar que el punto está dentro del área del canvas
     if (x >= 0 && y >= 0 && y <= 240) {
@@ -302,12 +311,21 @@ class _LoginScreenState extends State<LoginScreen> {
           x: x,
           y: y,
           t: timeDiff,
+          p: pressure,
         ));
       });
     }
   }
 
-  void _onPanEnd(DragEndDetails details) {
+  /// Captura el final del trazo
+  void _onPointerUp(PointerUpEvent event) {
+    setState(() {
+      _isDrawing = false;
+    });
+  }
+
+  /// Maneja cancelación de trazo
+  void _onPointerCancel(PointerCancelEvent event) {
     setState(() {
       _isDrawing = false;
     });
@@ -503,11 +521,12 @@ class _LoginScreenState extends State<LoginScreen> {
                 ),
                 const SizedBox(height: 24),
 
-                // Área de firma - GestureDetector envuelve todo
-                GestureDetector(
-                  onPanStart: _onPanStart,
-                  onPanUpdate: _onPanUpdate,
-                  onPanEnd: _onPanEnd,
+                // Área de firma - Listener captura eventos de puntero con presión
+                Listener(
+                  onPointerDown: _onPointerDown,
+                  onPointerMove: _onPointerMove,
+                  onPointerUp: _onPointerUp,
+                  onPointerCancel: _onPointerCancel,
                   child: MouseRegion(
                     child: Container(
                       height: 240,
