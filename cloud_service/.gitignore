@@ -37,6 +37,7 @@ env/
 
 # Scripts de prueba y desarrollo
 scripts/
+generate_certs*.ps1
 
 # IDE
 .vscode/
