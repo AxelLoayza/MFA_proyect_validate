@@ -21,6 +21,7 @@ def normalize_stroke(request: NormalizationRequest) -> Tuple[List[StrokePoint], 
     """
     points = request.stroke_points
     num_points = len(points)
+    real_length = num_points  # Capturar longitud original antes del padding
     
 
     if num_points < settings.MIN_STROKE_POINTS:
@@ -33,7 +34,7 @@ def normalize_stroke(request: NormalizationRequest) -> Tuple[List[StrokePoint], 
         normalized = points
     
 
-    features = extract_features(normalized, request.stroke_duration_ms)
+    features = extract_features(normalized, request.stroke_duration_ms, real_length)
     
     return normalized, features
 
@@ -132,13 +133,14 @@ def repeat_last_padding(points: List[StrokePoint], target_count: int) -> List[St
     return padded[:target_count]
 
 
-def extract_features(points: List[StrokePoint], duration_ms: int) -> Dict[str, Any]:
+def extract_features(points: List[StrokePoint], duration_ms: int, real_length: int) -> Dict[str, Any]:
     """
     Extract biometric features from normalized stroke
     
     Args:
         points: Normalized stroke points
         duration_ms: Total stroke duration in milliseconds
+        real_length: Original number of points before padding
         
     Returns:
         dict: Feature dictionary
@@ -146,6 +148,7 @@ def extract_features(points: List[StrokePoint], duration_ms: int) -> Dict[str, A
     if not points or len(points) < 2:
         return {
             "num_points": len(points),
+            "real_length": real_length,
             "total_distance": 0.0,
             "velocity_mean": 0.0,
             "velocity_max": 0.0,
@@ -175,6 +178,7 @@ def extract_features(points: List[StrokePoint], duration_ms: int) -> Dict[str, A
     
     return {
         "num_points": len(points),
+        "real_length": real_length,
         "total_distance": round(total_distance, 2),
         "velocity_mean": round(velocity_mean, 2),
         "velocity_max": round(velocity_max, 2),

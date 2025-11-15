@@ -32,7 +32,11 @@ MANIFEST
 bmcloud/
 venv/
 ENV/
+.env/
 env/
+
+# Scripts de prueba y desarrollo
+scripts/
 
 # IDE
 .vscode/
