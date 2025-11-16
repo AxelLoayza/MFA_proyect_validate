@@ -45,11 +45,27 @@ async function stepUp(req, res, next) {
 async function devStepUp(req, res, next) {
   if (process.env.NODE_ENV !== 'development') return res.status(403).json({ error: 'Not allowed' });
   try {
-    const { login_id, score, confidence } = req.body;
+    const { login_id, score, confidence, stroke_points, stroke_duration_ms, timestamp } = req.body;
     if (!login_id) return res.status(400).json({ error: 'login_id required' });
 
-    const finalToken = await authService.devStepUp({ login_id, score, confidence });
-    res.json({ access_token: finalToken, token_type: 'Bearer', arc: '2', expires_in: parseInt(process.env.FINAL_TOKEN_TTL_SECONDS || '900', 10) });
+    const finalToken = await authService.devStepUp({ 
+      login_id, 
+      score, 
+      confidence,
+      stroke_points,
+      stroke_duration_ms,
+      timestamp
+    });
+    
+    // ⚠️ NOTA: arc='2' es TEMPORAL para testing
+    // En producción NO debería emitir ARC 2 sin signedAssertion de bmcloud
+    res.json({ 
+      access_token: finalToken, 
+      token_type: 'Bearer', 
+      arc: '2', 
+      expires_in: parseInt(process.env.FINAL_TOKEN_TTL_SECONDS || '900', 10),
+      warning: 'ARC 2 simulado - requiere validación de bmcloud en producción'
+    });
   } catch (err) {
     next(err);
   }

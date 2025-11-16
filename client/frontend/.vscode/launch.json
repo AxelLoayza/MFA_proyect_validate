@@ -1,0 +1,39 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Flutter Web (Puerto 59671) - USAR ESTE",
+      "request": "launch",
+      "type": "dart",
+      "program": "lib/main.dart",
+      "args": [
+        "-d",
+        "chrome",
+        "--web-hostname=localhost",
+        "--web-port=59671"
+      ]
+    },
+    {
+      "name": "Flutter Web (Puerto 61992) - Alternativo",
+      "request": "launch",
+      "type": "dart",
+      "program": "lib/main.dart",
+      "args": [
+        "-d",
+        "chrome",
+        "--web-hostname=localhost",
+        "--web-port=61992"
+      ]
+    },
+    {
+      "name": "Flutter Desktop (Windows)",
+      "request": "launch",
+      "type": "dart",
+      "program": "lib/main.dart",
+      "args": [
+        "-d",
+        "windows"
+      ]
+    }
+  ]
+}

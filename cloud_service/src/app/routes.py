@@ -11,10 +11,9 @@ from .auth import verify_credentials
 from .utils import (
     RateLimiter, 
     get_client_ip, 
-    validate_stroke_points,
-    apply_linear_interpolation_padding,
-    calculate_basic_features
+    validate_stroke_points
 )
+from .preprocessing import preprocess_signature
 
 logger = logging.getLogger(__name__)
 
@@ -96,24 +95,73 @@ async def validate_biometric(
                 detail=error_msg
             )
         
-        # Check if padding is needed (should already be done by apiContainer)
-        stroke_points = payload.normalized_stroke
-        if len(stroke_points) < 100:
-            logger.info(f"Applying additional padding: {len(stroke_points)} -> 100")
-            stroke_points = apply_linear_interpolation_padding(stroke_points, 100)
+        # Reject signatures with real_length < 100 - no value for ML model
+        if payload.real_length < 100:
+            logger.warning(f"Signature rejected: real_length too short ({payload.real_length} < 100)")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Signature too short: {payload.real_length} points (minimum 100 required)"
+            )
         
         # Log received data
-        logger.info(f"Processing stroke: {len(stroke_points)} points, "
+        print("=" * 80)
+        print("📥 DATOS RECIBIDOS DESDE apiContainer")
+        print("=" * 80)
+        print(f"  📊 Puntos normalizados: {len(payload.normalized_stroke)}")
+        print(f"  📏 Longitud real (sin padding): {payload.real_length}")
+        print(f"  📐 Distancia total: {payload.features.total_distance:.2f} px")
+        print(f"  🏃 Velocidad promedio: {payload.features.velocity_mean:.2f} px/ms")
+        print(f"  ⚡ Velocidad máxima: {payload.features.velocity_max:.2f} px/ms")
+        print(f"  ⏱️  Duración: {payload.features.duration_ms} ms")
+        print("-" * 80)
+        
+        logger.info(f"Processing stroke: {len(payload.normalized_stroke)} points (real: {payload.real_length}), "
                    f"distance={payload.features.total_distance}, "
                    f"velocity_mean={payload.features.velocity_mean}")
         
+        # Advanced preprocessing pipeline
+        try:
+            features_array, mask = preprocess_signature(
+                stroke_points=payload.normalized_stroke,
+                real_length=payload.real_length,
+                target_frequency=100,
+                target_length=400
+            )
+            
+            # Mensaje de éxito con información detallada
+            valid_points = int(mask.sum())
+            padded_points = int((1 - mask).sum())
+            
+            print("✅ PREPROCESAMIENTO COMPLETADO")
+            print(f"  🎯 Shape final: {features_array.shape} (400 puntos × 8 features)")
+            print(f"  ✔️  Puntos válidos: {valid_points}")
+            print(f"  ➕ Puntos con padding: {padded_points}")
+            print(f"  📊 Features: [x, y, vx, vy, v_mag, theta, curvature, pressure]")
+            print(f"  🎭 Máscara aplicada: {mask.sum()}/{len(mask)} puntos reales")
+            print("=" * 80)
+            print()
+            
+            logger.info(f"Preprocessing complete: features shape={features_array.shape}, mask sum={mask.sum()}")
+        except ValueError as e:
+            logger.error(f"Preprocessing failed: {str(e)}")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Preprocessing error: {str(e)}"
+            )
+        except Exception as e:
+            logger.error(f"Unexpected preprocessing error: {str(e)}", exc_info=True)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Internal preprocessing error"
+            )
+        
         # TODO: Process with LSTM model
-        # For now, return mock validation response
-        # This will be replaced with actual model inference
+        # model_output = lstm_model.predict(features_array[np.newaxis, ...])
+        # For now, use mock validation
         
         # Mock validation logic (replace with real model)
-        is_signature_valid = _mock_validate_signature(stroke_points, payload.features)
-        confidence_score = _mock_calculate_confidence(stroke_points, payload.features)
+        is_signature_valid = _mock_validate_signature(features_array, mask, payload.features)
+        confidence_score = _mock_calculate_confidence(features_array, mask, payload.features)
         
         # Build response
         response = BiometricResponse(
@@ -132,8 +180,13 @@ async def validate_biometric(
                     "num_points"
                 ],
                 "matched_user": "usuario@example.com" if is_signature_valid else None,
-                "num_points_processed": len(stroke_points),
-                "padding_applied": len(payload.normalized_stroke) < 100
+                "num_points_processed": int(mask.sum()),
+                "preprocessing": {
+                    "real_length": payload.real_length,
+                    "after_preprocessing": features_array.shape[0],
+                    "valid_points": int(mask.sum()),
+                    "padded_points": int((1 - mask).sum())
+                }
             }
         )
         
@@ -150,13 +203,14 @@ async def validate_biometric(
         )
 
 
-def _mock_validate_signature(stroke_points, features) -> bool:
+def _mock_validate_signature(features_array, mask, features) -> bool:
     """
     Mock signature validation (to be replaced with LSTM model)
     
     Args:
-        stroke_points: List of normalized stroke points
-        features: Extracted features
+        features_array: Preprocessed features array (400, 8)
+        mask: Mask array (400,) - 1 for real, 0 for padding
+        features: Original extracted features
         
     Returns:
         bool: Whether signature appears valid
@@ -164,7 +218,9 @@ def _mock_validate_signature(stroke_points, features) -> bool:
     # Simple heuristic for mock validation
     # Check if signature has reasonable characteristics
     
-    if features.num_points < 100:
+    valid_points = int(mask.sum())
+    
+    if valid_points < 100:
         return False
     
     if features.velocity_mean < 0.5 or features.velocity_mean > 20.0:
@@ -177,13 +233,14 @@ def _mock_validate_signature(stroke_points, features) -> bool:
     return True
 
 
-def _mock_calculate_confidence(stroke_points, features) -> float:
+def _mock_calculate_confidence(features_array, mask, features) -> float:
     """
     Mock confidence calculation (to be replaced with LSTM model)
     
     Args:
-        stroke_points: List of normalized stroke points
-        features: Extracted features
+        features_array: Preprocessed features array (400, 8)
+        mask: Mask array (400,) - 1 for real, 0 for padding
+        features: Original extracted features
         
     Returns:
         float: Confidence score between 0.0 and 1.0
@@ -191,10 +248,12 @@ def _mock_calculate_confidence(stroke_points, features) -> float:
     # Simple heuristic for mock confidence
     base_confidence = 0.75
     
+    valid_points = int(mask.sum())
+    
     # Adjust based on number of points
-    if features.num_points >= 200:
+    if valid_points >= 200:
         base_confidence += 0.10
-    elif features.num_points < 120:
+    elif valid_points < 120:
         base_confidence -= 0.10
     
     # Adjust based on velocity consistency

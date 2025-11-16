@@ -3,8 +3,8 @@ Biometric Data Normalizer - Padding and normalization logic
 """
 from typing import List, Tuple, Dict, Any
 import math
-from app.models import StrokePoint, NormalizationRequest
-from app.config import get_settings
+from .models import StrokePoint, NormalizationRequest
+from .config import get_settings
 
 settings = get_settings()
 
@@ -23,15 +23,15 @@ def normalize_stroke(request: NormalizationRequest) -> Tuple[List[StrokePoint], 
     num_points = len(points)
     real_length = num_points  # Capturar longitud original antes del padding
     
-
+    # Validar límites antes de procesar
     if num_points < settings.MIN_STROKE_POINTS:
-
-        normalized = apply_padding(points, settings.MIN_STROKE_POINTS, settings.PADDING_STRATEGY)
+        raise ValueError(f"Stroke too short: {num_points} points < minimum required {settings.MIN_STROKE_POINTS}")
     elif num_points > settings.MAX_STROKE_POINTS:
         raise ValueError(f"Too many points: {num_points} > {settings.MAX_STROKE_POINTS}")
     else:
-  
-        normalized = points
+        # Padding a MAX_STROKE_POINTS para estandarizar transporte
+        # Cloud service usa real_length para extraer solo datos reales
+        normalized = apply_padding(points, settings.MAX_STROKE_POINTS, "repeat_last")
     
 
     features = extract_features(normalized, request.stroke_duration_ms, real_length)

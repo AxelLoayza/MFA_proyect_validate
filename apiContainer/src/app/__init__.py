@@ -7,8 +7,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 import logging
 
-from app.config import get_settings, validate_config
-from app.routes import router
+from .config import get_settings, validate_config
+from .routes import router
 
 # Configure logging
 logging.basicConfig(

@@ -119,6 +119,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
   // Variables de estado de la autenticación
   String? _tempToken; // Token temporal ARC 0.5
+  String? _loginId; // login_id para vincular con step-up
   String _currentArc = ''; // Estado actual del ARC
 
   // Variables de estado de la UI
@@ -162,6 +163,7 @@ class _LoginScreenState extends State<LoginScreen> {
         
         setState(() {
           _tempToken = loginResp.accessToken;
+          _loginId = loginResp.loginId; // Guardar login_id para step-up
           _currentArc = loginResp.arc;
           _authStep = 2;
           _statusMessage = 'Login exitoso (ARC ${loginResp.arc}). Dibuja tu firma.';
@@ -188,10 +190,12 @@ class _LoginScreenState extends State<LoginScreen> {
     }
   }
 
-  /// Realiza step-up enviando solo los datos del trazo como JSON
-  /// El backend recibirá el JSON y lo procesará según sea necesario
+  /// Realiza step-up enviando stroke_points a Node.js
+  /// Node.js internamente llamará a BMFA para normalización (si está disponible)
+  /// Por ahora: ARC 2 simulado (dev-step-up)
+  /// Futuro: Node.js recibirá signedAssertion de BMFA → ARC 1.0 (step-up)
   Future<void> _performStepUp() async {
-    if (_tempToken == null || _strokePoints.isEmpty) {
+    if (_tempToken == null || _strokePoints.isEmpty || _loginId == null) {
       _showMessage('Primero debes capturar tu firma');
       return;
     }
@@ -199,11 +203,13 @@ class _LoginScreenState extends State<LoginScreen> {
     try {
       setState(() {
         _isLoading = true;
-        _statusMessage = 'Enviando datos del trazo...';
+        _statusMessage = 'Enviando firma biométrica...';
       });
 
-      // Construir el payload con los datos del trazo
+      // Construir payload con stroke_points originales
+      // Node.js se encargará de llamar a BMFA si está disponible
       final tracePayload = {
+        'login_id': _loginId,
         'timestamp': DateTime.now().toIso8601String(),
         'stroke_points': _strokePoints.map((p) => p.toJson()).toList(),
         'stroke_duration_ms': _strokeStartTime != null 
@@ -211,9 +217,10 @@ class _LoginScreenState extends State<LoginScreen> {
             : 0,
       };
 
-      // Enviar el JSON directamente sin validación
+      // Enviar a Node.js /auth/dev-step-up
+      // Node.js internamente puede llamar a BMFA para normalización
       final response = await http.post(
-        Uri.parse('$backendUrl/auth/step-up'),
+        Uri.parse('$backendUrl/auth/dev-step-up'),
         headers: {
           'Content-Type': 'application/json',
           'Authorization': 'Bearer $_tempToken',
@@ -257,6 +264,7 @@ class _LoginScreenState extends State<LoginScreen> {
       _passwordController.clear();
       _strokePoints.clear();
       _tempToken = null;
+      _loginId = null;
       _currentArc = '';
       _authStep = 1;
       _statusMessage = '';

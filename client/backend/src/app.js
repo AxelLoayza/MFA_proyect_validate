@@ -14,11 +14,25 @@ const userRoutes = require('./routes/user.routes');
 const app = express();
 
 app.use(helmet());
+
+// CORS configuration - configured from .env for flexibility
+// Use CORS=* to allow all origins (development only)
+// Use CORS=http://localhost:59671,http://localhost:61992 for specific origins
+const corsOrigins = process.env.CORS === '*' 
+  ? true  // Allow all origins
+  : (process.env.CORS 
+      ? process.env.CORS.split(',').map(o => o.trim())
+      : ['http://localhost:59671', 'http://localhost:61992']);
+
 app.use(cors({
-  origin: 'http://localhost:59671',
+  origin: corsOrigins,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization']
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  credentials: true
 }));
+
+logger.info(`CORS habilitado: ${corsOrigins === true ? 'TODOS los orígenes (*)' : corsOrigins.join(', ')}`);
+
 app.use(express.json());
 app.use(morgan('dev'));
 app.use(limiter);

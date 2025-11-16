@@ -19,10 +19,10 @@ Protecciones:
 """
 from fastapi import APIRouter, HTTPException, status, Depends, Request
 import logging
-from app.models import NormalizationRequest, NormalizationResponse
-from app.normalizer import normalize_stroke
-from app.cloud_service import send_to_ml_service
-from app.rate_limiter import rate_limit_dependency
+from .models import NormalizationRequest, NormalizationResponse
+from .normalizer import normalize_stroke
+from .cloud_service import send_to_ml_service
+from .rate_limiter import rate_limit_dependency
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["Biometric Normalization"])

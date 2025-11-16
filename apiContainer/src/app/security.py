@@ -6,7 +6,7 @@ from pathlib import Path
 from fastapi import HTTPException, status
 from datetime import datetime
 import base64
-from app.config import get_settings
+from .config import get_settings
 
 settings = get_settings()
 

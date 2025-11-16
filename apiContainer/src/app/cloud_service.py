@@ -5,9 +5,9 @@ import requests
 import logging
 from typing import Dict, Any, List
 from fastapi import HTTPException, status
-from app.config import get_settings
-from app.security import create_basic_auth_header
-from app.models import StrokePoint
+from .config import get_settings
+from .security import create_basic_auth_header
+from .models import StrokePoint
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -16,11 +16,14 @@ settings = get_settings()
 def send_to_ml_service(normalized_points: List[StrokePoint], features: Dict[str, Any]) -> Dict[str, Any]:
 
     try:
-
+        # Extract real_length from features - cloud_service expects it as separate field at root level
+        real_length = features.get("real_length")
+        
         payload = {
             "normalized_stroke": [
                 {"x": p.x, "y": p.y, "t": p.t, "p": p.p} for p in normalized_points
             ],
+            "real_length": real_length,
             "features": features,
         }
         

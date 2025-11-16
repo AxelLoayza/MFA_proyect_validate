@@ -36,8 +36,12 @@ ENV/
 env/
 
 # Scripts de prueba y desarrollo
+# Excluir scripts folder completo (contiene test_api.py, test_integration.py, test_size_limit.py, start_server scripts)
 scripts/
 generate_certs*.ps1
+
+# Test scripts adicionales en la raíz (si los hay)
+test_*.py
 
 # IDE
 .vscode/

@@ -50,7 +50,10 @@ bmfa/
 htmlcov/
 .tox/
 .hypothesis/
+
+# Test scripts - no versionar
 test_api.py
+test_health.py
 test_*.py
 
 # Logs

@@ -38,6 +38,7 @@ class BiometricRequest(BaseModel):
         max_length=1200
     )
     features: BiometricFeatures = Field(..., description="Extracted features")
+    real_length: int = Field(..., description="Original length before padding", ge=100)
 
     @field_validator('normalized_stroke')
     @classmethod
