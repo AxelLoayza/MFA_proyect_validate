@@ -19,9 +19,9 @@ Protecciones:
 """
 from fastapi import APIRouter, HTTPException, status, Depends, Request
 import logging
-from .models import NormalizationRequest, NormalizationResponse
+from .models import NormalizationRequest, NormalizationResponse, EnrollmentRequest, EnrollmentResponse
 from .normalizer import normalize_stroke
-from .cloud_service import send_to_ml_service
+from .cloud_service import send_to_ml_service, send_enrollment_to_ml_service
 from .rate_limiter import rate_limit_dependency
 
 logger = logging.getLogger(__name__)
@@ -69,8 +69,7 @@ async def normalize_biometric(request: NormalizationRequest) -> NormalizationRes
         try:
             ml_response = send_to_ml_service(normalized_points, features)
             logger.info(f"✓ Respuesta de ML recibida: {ml_response}")
-        except HTTPException as e:
-            logger.error(f"Error del servicio ML: {e.detail}")
+        except HTTPException:
             raise
         
         # 3. Retornar respuesta exitosa
@@ -91,6 +90,49 @@ async def normalize_biometric(request: NormalizationRequest) -> NormalizationRes
             detail=f"Internal error: {str(e)}"
         )
 
+
+@router.post("/enroll", response_model=EnrollmentResponse, dependencies=[Depends(rate_limit_dependency)])
+async def enroll_biometric_master(request: EnrollmentRequest) -> EnrollmentResponse:
+    """
+    Endpoint intermedio para registro.
+    Toma 5 firmas desde Node.js, las normaliza en memoria y solicita 
+    el tensor final numérico al cloud_service.
+    """
+    logger.info(f"Recibiendo solicitud de enrolamiento con {len(request.signatures)} firmas")
+    
+    # Normalizar cada firma individualmente (padding y corrección de ejes)
+    normalized_payloads = []
+    
+    try:
+        for i, sig in enumerate(request.signatures):
+             norm_points, features = normalize_stroke(sig)
+             
+             normalized_payloads.append({
+                 "normalized_stroke": [{"x": p.x, "y": p.y, "t": p.t, "p": p.p} for p in norm_points],
+                 "real_length": features.get("real_length"),
+                 "features": features
+             })
+             
+        logger.info(f"✓ 5 Firmas normalizadas (Padding y Padding Features aplicados)")
+        
+        # Enviar a cloud_service/api/biometric/enroll
+        cloud_response = send_enrollment_to_ml_service(normalized_payloads)
+        
+        # `master_feature` viene como {"mean": [...], "std": [...]}
+        return EnrollmentResponse(
+            status="success",
+            message="Biometric enrollment tensor calculated successfully",
+            master_feature=cloud_response.get("master_feature", {})
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error procesando el enrolamiento: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Internal error formatting enrollment signatures: {str(e)}"
+        )
 
 @router.get("/health")
 async def health_check() -> dict:

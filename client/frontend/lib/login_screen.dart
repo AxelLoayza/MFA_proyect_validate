@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
+import 'enrollment_screen.dart';
 
 /// Clase para representar un punto del trazo biométrico
 /// Captura coordenadas x, y, tiempo relativo en milisegundos y presión
@@ -124,6 +125,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
   // Variables de estado de la UI
   bool _isLoading = false;
+  bool _isLoginMode = true; // Controla si estamos en Login o Registro
   bool _isPasswordVisible = false;
   String _statusMessage = '';
   int _authStep = 1; // 1: Login, 2: Firma, 3: Completado
@@ -135,9 +137,9 @@ class _LoginScreenState extends State<LoginScreen> {
     super.dispose();
   }
 
-  /// Realiza login con email/password contra el backend Node.js
-  /// Retorna token temporal ARC 0.5
-  Future<void> _performLogin() async {
+  /// Realiza login o registro con email/password contra el backend Node.js
+  /// Retorna token temporal ARC 0.5 y manda a Enrollment si es registro nuevo
+  Future<void> _performLoginOrRegister() async {
     if (_emailController.text.isEmpty || _passwordController.text.isEmpty) {
       _showMessage('Por favor completa email y contraseña');
       return;
@@ -146,9 +148,33 @@ class _LoginScreenState extends State<LoginScreen> {
     try {
       setState(() {
         _isLoading = true;
-        _statusMessage = 'Autenticando...';
+        _statusMessage = _isLoginMode ? 'Autenticando...' : 'Creando cuenta...';
       });
 
+      // Flujo de Registro 
+      if (!_isLoginMode) {
+        final regResponse = await http.post(
+          Uri.parse('$backendUrl/users/register'),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({
+            'email': _emailController.text,
+            'password': _passwordController.text,
+            'role': 'user'
+          }),
+        );
+
+        if (regResponse.statusCode != 201) {
+          final error = jsonDecode(regResponse.body);
+          setState(() {
+            _statusMessage = 'Error en registro: ${error['error'] ?? 'Registro fallido'}';
+          });
+          _showMessage('No se pudo crear la cuenta');
+          setState(() { _isLoading = false; });
+          return;
+        }
+      }
+
+      // Paso común: Login para obtener el ARC 0.5
       final response = await http.post(
         Uri.parse('$backendUrl/auth/login'),
         headers: {'Content-Type': 'application/json'},
@@ -165,12 +191,34 @@ class _LoginScreenState extends State<LoginScreen> {
           _tempToken = loginResp.accessToken;
           _loginId = loginResp.loginId; // Guardar login_id para step-up
           _currentArc = loginResp.arc;
-          _authStep = 2;
-          _statusMessage = 'Login exitoso (ARC ${loginResp.arc}). Dibuja tu firma.';
-          _strokePoints.clear();
+          _authStep = 2; // Para cuando regresen del registro o sea solo login
         });
 
-        _showMessage('✓ Login exitoso. Ahora captura tu firma biométrica.');
+        if (!_isLoginMode) {
+          _statusMessage = 'Cuenta creada. Necesitamos registrar tu firma.';
+          _showMessage('✓ Registro exitoso. Ahora captura tus 5 firmas.');
+          
+          if (!mounted) return;
+          // Automáticamente los enviamos a la pantalla de enrolamiento
+          Navigator.of(context).push(
+            MaterialPageRoute(
+              builder: (context) => EnrollmentScreen(jwtToken: _tempToken!),
+            ),
+          ).then((_) {
+            // Cuando vuelvan, se aseguran de estar en modo login
+            setState(() {
+              _isLoginMode = true;
+              _authStep = 1;
+              _statusMessage = 'Firma configurada. Por favor, inicia sesión de nuevo.';
+            });
+          });
+        } else {
+          setState(() {
+            _statusMessage = 'Login exitoso (ARC ${loginResp.arc}). Dibuja tu firma.';
+            _strokePoints.clear();
+          });
+          _showMessage('✓ Login exitoso. Ahora captura tu firma biométrica para completar el MFA.');
+        }
       } else {
         final error = jsonDecode(response.body);
         setState(() {
@@ -409,18 +457,20 @@ class _LoginScreenState extends State<LoginScreen> {
 
               // PASO 1: Login con email/password
               if (_authStep == 1) ...[
-                const Text(
-                  'Iniciar Sesión',
-                  style: TextStyle(
+                Text(
+                  _isLoginMode ? 'Iniciar Sesión' : 'Crear Nueva Cuenta',
+                  style: const TextStyle(
                     fontSize: 24,
                     fontWeight: FontWeight.bold,
                     color: Colors.black,
                   ),
                 ),
                 const SizedBox(height: 16),
-                const Text(
-                  'Ingresa tus credenciales para continuar',
-                  style: TextStyle(
+                Text(
+                  _isLoginMode 
+                      ? 'Ingresa tus credenciales para continuar'
+                      : 'Ingresa un email y una contraseña fuerte. \nDespués, registraremos tu firma biométrica única.',
+                  style: const TextStyle(
                     fontSize: 14,
                     color: Color(0xFF6B7280),
                   ),
@@ -479,9 +529,9 @@ class _LoginScreenState extends State<LoginScreen> {
                 ),
                 const SizedBox(height: 24),
 
-                // Botón Login
+                // Botón Login / Registro
                 ElevatedButton(
-                  onPressed: _isLoading ? null : _performLogin,
+                  onPressed: _isLoading ? null : _performLoginOrRegister,
                   style: ElevatedButton.styleFrom(
                     backgroundColor: const Color(0xFF0D9488),
                     foregroundColor: Colors.white,
@@ -499,13 +549,36 @@ class _LoginScreenState extends State<LoginScreen> {
                             valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
                           ),
                         )
-                      : const Text(
-                          'Iniciar Sesión',
-                          style: TextStyle(
+                      : Text(
+                          _isLoginMode ? 'Iniciar Sesión' : 'Registrarme y Configurar Biometría',
+                          style: const TextStyle(
                             fontSize: 16,
                             fontWeight: FontWeight.w600,
                           ),
                         ),
+                ),
+                
+                const SizedBox(height: 12),
+                
+                // Toggle Login/Registro
+                TextButton(
+                  onPressed: _isLoading
+                      ? null
+                      : () {
+                          setState(() {
+                            _isLoginMode = !_isLoginMode;
+                            _statusMessage = '';
+                          });
+                        },
+                  child: Text(
+                    _isLoginMode
+                        ? "¿No tienes una cuenta? Regístrate aquí"
+                        : "¿Ya tienes cuenta? Inicia Sesión",
+                    style: const TextStyle(
+                      color: Color(0xFF0D9488),
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
                 ),
               ],
 

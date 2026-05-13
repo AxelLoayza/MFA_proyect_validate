@@ -7,12 +7,58 @@ from typing import Dict, Any, List
 from fastapi import HTTPException, status
 from .config import get_settings
 from .security import create_basic_auth_header
-from .models import StrokePoint
+from .models import StrokePoint, NormalizationRequest
+from typing import Dict, Any, List
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
 
-
+def send_enrollment_to_ml_service(normalized_payloads: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """
+    Envía 5 firmas ya normalizadas (pre-padding) al microservicio Cloud
+    para solicitar la generación del "Master Feature".
+    
+    Args:
+       normalized_payloads: Lista de 5 diccionarios con la estructura:
+                            {"normalized_stroke": [...], "real_length": val, "features": {...}}
+    """
+    try:
+        # Wrap en el modelo EnrollmentCloudRequest (que espera la API /api/biometric/enroll)
+        payload = {
+            "signatures": normalized_payloads
+        }
+        
+        auth_header = create_basic_auth_header(
+            settings.CLOUD_PROVIDER_USERNAME,
+            settings.CLOUD_PROVIDER_PASSWORD
+        )
+        
+        response = requests.post(
+            f"{settings.CLOUD_PROVIDER_ENDPOINT}/api/biometric/enroll",
+            json=payload,
+            headers={
+                "Authorization": auth_header,
+                "Content-Type": "application/json",
+            },
+            timeout=settings.CLOUD_PROVIDER_TIMEOUT,
+            verify=settings.CLOUD_PROVIDER_VERIFY_SSL,
+        )
+        
+        if response.status_code != 200:
+            logger.error(f"Error generando Master Feature: {response.status_code} - {response.text}")
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=f"Cloud Service Enrollment Error: {response.text}"
+            )
+            
+        return response.json()
+        
+    except requests.exceptions.Timeout:
+        raise HTTPException(status_code=504, detail="Cloud service timeout")
+    except Exception as e:
+        logger.error(f"Unexpected Cloud service error: {str(e)}")
+        raise HTTPException(status_code=502, detail=str(e))
+        
 def send_to_ml_service(normalized_points: List[StrokePoint], features: Dict[str, Any]) -> Dict[str, Any]:
 
     try:

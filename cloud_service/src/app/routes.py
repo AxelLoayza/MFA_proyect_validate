@@ -6,14 +6,14 @@ from typing import Dict, Any
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import JSONResponse
 
-from .models import BiometricRequest, BiometricResponse, HealthResponse
+from .models import BiometricRequest, BiometricResponse, HealthResponse, EnrollmentCloudRequest, MasterFeatureResponse
 from .auth import verify_credentials
 from .utils import (
     RateLimiter, 
     get_client_ip, 
     validate_stroke_points
 )
-from .preprocessing import preprocess_signature
+from .preprocessing import preprocess_signature, generate_master_feature
 
 logger = logging.getLogger(__name__)
 
@@ -148,12 +148,85 @@ async def validate_biometric(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Preprocessing error: {str(e)}"
             )
-        except Exception as e:
-            logger.error(f"Unexpected preprocessing error: {str(e)}", exc_info=True)
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Internal preprocessing error"
+            
+    except HTTPException:
+        # Re-raise HTTP exceptions
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Error procesando la biometría"
+        )
+
+@router.post("/api/biometric/enroll", response_model=MasterFeatureResponse)
+async def enroll_biometric(
+    request: Request,
+    payload: EnrollmentCloudRequest,
+    authenticated: bool = Depends(verify_credentials)
+):
+    """
+    Endpoint para RECIBIR 5 FIRMAS y RETORNAR EL MASTER FEATURE.
+    No valida contra la base de datos ni consulta red neuronal.
+    Genera el tensor matemático (mean) y rango de tolerancia (std)
+    """
+    client_ip = get_client_ip(request)
+    logger.info(f"Received MERGE/ENROLLMENT request from {client_ip}")
+
+    # Validar limitación de tasa
+    if not rate_limiter.check_rate_limit(client_ip):
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Rate limit exceeded"
+        )
+    
+    list_preprocessed = []
+    
+    try:
+        # Preprocesar las 5 firmas
+        for i, sig in enumerate(payload.signatures):
+             # Validar stroke points
+            is_valid, error_msg = validate_stroke_points(sig.normalized_stroke, min_points=100, max_points=1200)
+            if not is_valid:
+                raise ValueError(f"Firma #{i+1} inválida: {error_msg}")
+            
+            if sig.real_length < 100:
+                 raise ValueError(f"Firma #{i+1} muy corta: real_length={sig.real_length}")
+                 
+            # Extracción Matemática / Preprocesamiento
+            features_array, mask = preprocess_signature(
+                stroke_points=sig.normalized_stroke,
+                real_length=sig.real_length,
+                target_frequency=100,
+                target_length=400
             )
+            list_preprocessed.append((features_array, mask))
+            
+        print("=" * 80)
+        print("✅ TODAS LAS 5 FIRMAS PREPROCESADAS CORRECTAMENTE PARA ENROLAMIENTO")
+        print("=" * 80)
+        
+        # Generar "Feature Maestro" matemático
+        master_feature = generate_master_feature(list_preprocessed)
+        
+        return MasterFeatureResponse(
+            status="success",
+            message="Feature Maestro generado a partir de 5 firmas biométricas",
+            master_feature=master_feature
+        )
+        
+    except ValueError as e:
+        logger.error(f"Error procesando firmas de enrolamiento: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Feature extraction error: {str(e)}"
+        )
+    except Exception as e:
+        logger.error(f"Unexpected preprocessing error: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Internal preprocessing error"
+        )
         
         # TODO: Process with LSTM model
         # model_output = lstm_model.predict(features_array[np.newaxis, ...])

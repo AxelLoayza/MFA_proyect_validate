@@ -59,6 +59,25 @@ class BiometricResponse(BaseModel):
     details: Dict[str, Any] = Field(default_factory=dict, description="Additional details")
 
 
+class EnrollmentCloudRequest(BaseModel):
+    """Request para generar el Feature Maestro con 5 firmas"""
+    signatures: List[BiometricRequest] = Field(
+        ...,
+        min_length=5,
+        max_length=5,
+        description="5 firmas normalizadas para extraer master feature"
+    )
+
+class MasterFeatureResponse(BaseModel):
+    """Respuesta con el vector de características maestro"""
+    status: str = Field(..., description="success | error")
+    master_feature: Dict[str, List[List[float]]] = Field(
+        ...,
+        description="Contiene las matrices 'mean' y 'std'"
+    )
+    message: str = Field(..., description="Mensaje de estado")
+
+
 class HealthResponse(BaseModel):
     """Health check response"""
     status: str = Field(..., description="Service status")

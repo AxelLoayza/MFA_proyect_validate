@@ -84,6 +84,42 @@ def preprocess_signature(
     return padded_features, mask
 
 
+def generate_master_feature(list_of_signatures: List[Tuple[np.ndarray, np.ndarray]]) -> Dict[str, list]:
+    """
+    Calcula el 'Feature Maestro' a partir de 5 firmas procesadas.
+    
+    Args:
+        list_of_signatures: Lista de 5 tuplas. Cada tupla contiene:
+            - features_array: np.ndarray (400, 8)
+            - mask: np.ndarray (400,)
+            Solo tomamos en cuenta los features.
+            
+    Returns:
+        Dict con los tensores promedio (mean) y desviación estándar (std) 
+        como listas para fácil serialización a JSON.
+    """
+    logger.info(f"Generando Feature Maestro a partir de {len(list_of_signatures)} firmas")
+    
+    # Extraer solo los tensores de características y validar forma
+    features_only = []
+    for f, m in list_of_signatures:
+        if f.shape != (400, 8):
+            raise ValueError(f"Dimensión incorrecta en Tensor. Esperado (400,8), recibido {f.shape}")
+        features_only.append(f)
+        
+    # Apilamos en un nuevo eje: Resulta en tensor de shape (5, 400, 8)
+    stacked = np.stack(features_only, axis=0)
+    
+    # Calculamos los promedios y tolerancias a lo largo del eje 0 (entre las 5 firmas)
+    mean_tensor = np.nanmean(stacked, axis=0)
+    std_tensor = np.nanstd(stacked, axis=0)
+    
+    return {
+        "mean": mean_tensor.tolist(),
+        "std": std_tensor.tolist()
+    }
+
+
 def recover_original_sequence(stroke_points: List, real_length: int) -> np.ndarray:
     """
     Recuperar secuencia original eliminando el padding aplicado en apiContainer
