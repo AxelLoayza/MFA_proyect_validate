@@ -28,6 +28,7 @@ src/scripts/test_dev_step_up.js
 src/scripts/test_login_complete.js
 src/scripts/test_audit_system.js
 src/scripts/test_login_response.js
+src/scripts/test_bmfa_connection.js
 src/scripts/verify_restoration.js
 
 # Database setup scripts with test data

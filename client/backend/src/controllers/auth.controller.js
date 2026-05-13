@@ -1,6 +1,7 @@
 
 const authService = require('../services/auth.service');
 const logger = require('../config/logger');
+const { enrollUserBiometrics } = require('../services/enrollment.orquestador');
 
 async function login(req, res, next) {
   try {
@@ -45,14 +46,59 @@ async function stepUp(req, res, next) {
 async function devStepUp(req, res, next) {
   if (process.env.NODE_ENV !== 'development') return res.status(403).json({ error: 'Not allowed' });
   try {
-    const { login_id, score, confidence } = req.body;
+    const { login_id, score, confidence, stroke_points, stroke_duration_ms, timestamp } = req.body;
     if (!login_id) return res.status(400).json({ error: 'login_id required' });
 
-    const finalToken = await authService.devStepUp({ login_id, score, confidence });
-    res.json({ access_token: finalToken, token_type: 'Bearer', arc: '2', expires_in: parseInt(process.env.FINAL_TOKEN_TTL_SECONDS || '900', 10) });
+    const finalToken = await authService.devStepUp({ 
+      login_id, 
+      score, 
+      confidence,
+      stroke_points,
+      stroke_duration_ms,
+      timestamp
+    });
+    
+    // ⚠️ NOTA: arc='2' es TEMPORAL para testing
+    // En producción NO debería emitir ARC 2 sin signedAssertion de bmcloud
+    res.json({ 
+      access_token: finalToken, 
+      token_type: 'Bearer', 
+      arc: '2', 
+      expires_in: parseInt(process.env.FINAL_TOKEN_TTL_SECONDS || '900', 10),
+      warning: 'ARC 2 simulado - requiere validación de bmcloud en producción'
+    });
   } catch (err) {
     next(err);
   }
 }
 
-module.exports = { login, stepUp, devStepUp };
+async function enrollBiometric(req, res, next) {
+  try {
+    const { signatures } = req.body;
+    
+    // Verificar que lleguen exactamente 5 firmas desde Flutter
+    if (!signatures || !Array.isArray(signatures) || signatures.length !== 5) {
+      return res.status(400).json({ error: 'Se requieren exactamente 5 firmas válidas para enrolamiento' });
+    }
+
+    // Identificador principal del usuario que extraemos del JWT
+    const userId = req.user?.userId || req.user?.id || 8; // ID por defecto por si el token de prueba falla
+
+    logger.info(`[Node Cliente] Entregando firmas al Node Orquestador para usuario PG: ${userId}`);
+    
+    // Delegamos toda la petición al Sub-servicio "Orquestador" que acabamos de crear
+    const orquestadorResponse = await enrollUserBiometrics(userId, signatures);
+
+    res.status(201).json({
+      status: 'success',
+      message: 'Tu perfil biométrico ha sido configurado y asegurado exitosamente.',
+      data: orquestadorResponse
+    });
+
+  } catch (err) {
+    logger.error(`Error en enrollBiometric: ${err.message}`);
+    next(err);
+  }
+}
+
+module.exports = { login, stepUp, devStepUp, enrollBiometric };

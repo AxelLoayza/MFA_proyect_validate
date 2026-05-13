@@ -3,8 +3,8 @@ Biometric Data Normalizer - Padding and normalization logic
 """
 from typing import List, Tuple, Dict, Any
 import math
-from app.models import StrokePoint, NormalizationRequest
-from app.config import get_settings
+from .models import StrokePoint, NormalizationRequest
+from .config import get_settings
 
 settings = get_settings()
 
@@ -21,19 +21,20 @@ def normalize_stroke(request: NormalizationRequest) -> Tuple[List[StrokePoint], 
     """
     points = request.stroke_points
     num_points = len(points)
+    real_length = num_points  # Capturar longitud original antes del padding
     
-
+    # Validar límites antes de procesar
     if num_points < settings.MIN_STROKE_POINTS:
-
-        normalized = apply_padding(points, settings.MIN_STROKE_POINTS, settings.PADDING_STRATEGY)
+        raise ValueError(f"Stroke too short: {num_points} points < minimum required {settings.MIN_STROKE_POINTS}")
     elif num_points > settings.MAX_STROKE_POINTS:
         raise ValueError(f"Too many points: {num_points} > {settings.MAX_STROKE_POINTS}")
     else:
-  
-        normalized = points
+        # Padding a MAX_STROKE_POINTS para estandarizar transporte
+        # Cloud service usa real_length para extraer solo datos reales
+        normalized = apply_padding(points, settings.MAX_STROKE_POINTS, "repeat_last")
     
 
-    features = extract_features(normalized, request.stroke_duration_ms)
+    features = extract_features(normalized, request.stroke_duration_ms, real_length)
     
     return normalized, features
 
@@ -132,13 +133,14 @@ def repeat_last_padding(points: List[StrokePoint], target_count: int) -> List[St
     return padded[:target_count]
 
 
-def extract_features(points: List[StrokePoint], duration_ms: int) -> Dict[str, Any]:
+def extract_features(points: List[StrokePoint], duration_ms: int, real_length: int) -> Dict[str, Any]:
     """
     Extract biometric features from normalized stroke
     
     Args:
         points: Normalized stroke points
         duration_ms: Total stroke duration in milliseconds
+        real_length: Original number of points before padding
         
     Returns:
         dict: Feature dictionary
@@ -146,6 +148,7 @@ def extract_features(points: List[StrokePoint], duration_ms: int) -> Dict[str, A
     if not points or len(points) < 2:
         return {
             "num_points": len(points),
+            "real_length": real_length,
             "total_distance": 0.0,
             "velocity_mean": 0.0,
             "velocity_max": 0.0,
@@ -175,6 +178,7 @@ def extract_features(points: List[StrokePoint], duration_ms: int) -> Dict[str, A
     
     return {
         "num_points": len(points),
+        "real_length": real_length,
         "total_distance": round(total_distance, 2),
         "velocity_mean": round(velocity_mean, 2),
         "velocity_max": round(velocity_max, 2),

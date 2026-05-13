@@ -68,3 +68,25 @@ class NormalizationResponse(BaseModel):
     features: dict = Field(default={}, description="Features extraídas (velocidad, distancia, etc)")
     ml_response: dict = Field(default={}, description="Respuesta del servicio ML en la nube")
     error: str | None = None  # Optional error message
+
+
+class EnrollmentRequest(BaseModel):
+    """
+    Request que envía Node.js con 5 firmas para enrolamiento
+    """
+    signatures: List[NormalizationRequest] = Field(
+        ...,
+        min_length=5,
+        max_length=5,
+        description="Exactamente 5 firmas para el enrolamiento de biometría"
+    )
+
+
+class EnrollmentResponse(BaseModel):
+    """
+    Response que la API retorna con el Feature Maestro a Node.js
+    """
+    status: str
+    message: str
+    master_feature: dict = Field(..., description="Tensores matemáticos: mean y std")
+
