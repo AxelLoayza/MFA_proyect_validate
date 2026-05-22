@@ -9,6 +9,7 @@ const errorHandler = require('./middleware/errorHandler');
 const logger = require('./config/logger');
 require('dotenv').config();
 const authRoutes = require('./routes/auth.routes');
+const authController = require('./controllers/auth.controller');
 const userRoutes = require('./routes/user.routes');
 
 const app = express();
@@ -22,7 +23,7 @@ const corsOrigins = process.env.CORS === '*'
   ? true  // Allow all origins
   : (process.env.CORS 
       ? process.env.CORS.split(',').map(o => o.trim())
-      : ['http://localhost:59671', 'http://localhost:61992']);
+      : ['http://localhost:59671', 'http://localhost:61992','http://localhost:8080', 'http://localhost:8000']);
 
 app.use(cors({
   origin: corsOrigins,
@@ -39,10 +40,12 @@ app.use(limiter);
 
 
 
-
 console.log('authRoutes es:', typeof authRoutes);
 
-app.use('/auth', authRoutes);
+// Montar rutas de autenticación bajo el prefijo /api/auth para mantener el contrato
+app.use('/api/auth', authRoutes);
+// Public callback path compatible with your Google Console registration
+app.get('/api/auth/callback/google', authController.googleCallback);
 app.use('/users', userRoutes);
 
 app.use(errorHandler);

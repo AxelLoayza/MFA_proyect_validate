@@ -6,10 +6,30 @@ const { verifyAssertion } = require('./cloudScoring.service');
 const { v4: uuidv4 } = require('uuid');
 const logger = require('../config/logger');
 const sessionModel = require('../models/session.model');
-const https = require('https');
-const http = require('http');
 
 async function login(email, password) {
+  if (process.env.AUTH_DEV_BYPASS === 'true') {
+    const user = {
+      id: uuidv4(),
+      email,
+      role: 'user',
+    };
+
+    const loginId = uuidv4();
+    const nonce = uuidv4();
+    const tempPayload = {
+      sub: user.id,
+      email: user.email,
+      login_id: loginId,
+      nonce,
+    };
+
+    const tempToken = TokenService.signTempToken(tempPayload);
+
+    logger.info(`Dev bypass login created for user ${user.email}`);
+    return { token: tempToken, arc: '0.5', user };
+  }
+
   const user = await userService.validatePassword(email, password);
   if (!user) {
     const error = new Error('Credenciales inválidas');
@@ -56,6 +76,10 @@ async function login(email, password) {
  * - return final token
  */
 async function stepUp({ signedAssertion }) {
+  if (process.env.BYPASS_CLOUD_ASSERTION === 'true') {
+    return bypassStepUp({ signedAssertion });
+  }
+
   // verify signature & claims
   const payload = await verifyAssertion(signedAssertion, { maxAgeSeconds: 120 });
   const { login_id: loginId, sub: userId, score, nonce } = payload;
@@ -135,97 +159,102 @@ async function stepUp({ signedAssertion }) {
   return finalToken;
 }
 
-/**
- * callBMFA: Internal helper to call BMFA service for stroke normalization
- * Returns normalized_points or null if BMFA unavailable
- */
-async function callBMFA({ user_id, login_id, nonce, stroke_points, stroke_duration_ms, timestamp, tempToken }) {
-  const bmfaUrl = process.env.BMFA_URL || 'http://localhost:9001';
-  
-  return new Promise((resolve) => {
-    try {
-      const payload = JSON.stringify({
-        user_id,
-        login_id,
-        nonce,
-        stroke_points,
-        stroke_duration_ms,
-        timestamp
-      });
+async function bypassStepUp({ signedAssertion }) {
+  const jwt = require('jsonwebtoken');
+  const tempToken = signedAssertion;
 
-      const url = new URL(`${bmfaUrl}/normalize`);
-      const options = {
-        hostname: url.hostname,
-        port: url.port || 9001,
-        path: url.pathname,
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Content-Length': Buffer.byteLength(payload),
-          'Authorization': `Bearer ${tempToken}`
+  if (!tempToken) {
+    const error = new Error('Temporary token required for bypass step-up');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  let decoded;
+  try {
+    decoded = jwt.verify(tempToken, require('fs').readFileSync(require('path').join(__dirname, '../keys/jwt_public.pem'), 'utf8'), {
+      algorithms: [process.env.JWT_ALGO || 'RS256'],
+      issuer: process.env.JWT_ISSUER || 'LocalAzure',
+    });
+  } catch (err) {
+    const error = new Error('Temporary token invalid');
+    error.statusCode = 401;
+    throw error;
+  }
+
+  const loginId = decoded.login_id;
+  const userId = decoded.sub;
+  const nonce = decoded.nonce;
+
+  if (process.env.AUTH_DEV_BYPASS === 'true') {
+    const validationId = `bypass_${uuidv4()}`;
+    const finalToken = TokenService.signFinalToken({
+      userId,
+      role: 'user',
+      customClaims: {
+        validation_id: validationId,
+        biometric: {
+          verified_at: new Date().toISOString(),
+          score: 1,
+          method: 'bypass',
         },
-        timeout: 5000
-      };
+      },
+    });
 
-      const protocol = url.protocol === 'https:' ? https : http;
-      const req = protocol.request(options, (res) => {
-        let data = '';
-        res.on('data', (chunk) => { data += chunk; });
-        res.on('end', () => {
-          try {
-            if (res.statusCode === 200) {
-              const result = JSON.parse(data);
-              logger.info(`BMFA normalized ${result.point_count} points (was_padded: ${result.was_padded})`);
-              resolve(result);
-            } else {
-              logger.warn(`BMFA returned status ${res.statusCode}`);
-              resolve(null);
-            }
-          } catch (e) {
-            logger.warn(`BMFA response parse error: ${e.message}`);
-            resolve(null);
-          }
-        });
-      });
+    logger.info(`Bypass step-up completed without database for user ${userId} (validation_id=${validationId})`);
+    return finalToken;
+  }
 
-      req.on('error', (e) => {
-        logger.warn(`BMFA not available: ${e.message}`);
-        resolve(null);
-      });
+  const { rows } = await pool.query('SELECT * FROM login_sessions WHERE login_id = $1', [loginId]);
+  const session = rows[0];
+  if (!session) {
+    const error = new Error('Login session not found');
+    error.statusCode = 400;
+    throw error;
+  }
+  if (session.status !== 'pending') {
+    const error = new Error('Login session not pending');
+    error.statusCode = 400;
+    throw error;
+  }
+  if (session.nonce !== nonce) {
+    const error = new Error('Nonce mismatch');
+    error.statusCode = 400;
+    throw error;
+  }
+  if (new Date(session.expires_at) < new Date()) {
+    const error = new Error('Login session expired');
+    error.statusCode = 400;
+    throw error;
+  }
 
-      req.on('timeout', () => {
-        req.destroy();
-        logger.warn('BMFA request timeout');
-        resolve(null);
-      });
-
-      req.write(payload);
-      req.end();
-    } catch (error) {
-      logger.warn(`BMFA call failed: ${error.message}`);
-      resolve(null);
-    }
+  const validationId = `bypass_${uuidv4()}`;
+  const finalToken = TokenService.signFinalToken({
+    userId,
+    role: session.role || 'user',
+    customClaims: {
+      validation_id: validationId,
+      biometric: {
+        verified_at: new Date().toISOString(),
+        score: 1,
+        method: 'bypass',
+      },
+    },
   });
+
+  await pool.query(
+    `UPDATE login_sessions SET final_token = $1, status = 'completed' WHERE login_id = $2`,
+    [finalToken, loginId]
+  );
+
+  logger.info(`Bypass step-up completed for login ${loginId} (validation_id=${validationId})`);
+  return finalToken;
 }
 
 /**
- * devStepUp: TEMPORARY development helper - SOLO PARA TESTING
- * 
- * ⚠️ IMPORTANTE: Este endpoint NO debería emitir ARC 2 en producción
- * El flujo correcto requiere:
- *   1. BMFA normaliza stroke_points
- *   2. BMFA envía a bmcloud para validación ML
- *   3. bmcloud retorna signedAssertion (JWS firmado)
- *   4. Node.js valida signedAssertion en /auth/step-up
- *   5. RECIÉN ahí se emite ARC 1.0
- * 
- * Este endpoint es SOLO para testing mientras bmcloud no está disponible
- * Accepts { login_id, stroke_points, stroke_duration_ms, timestamp }
- * Optional: score, confidence (simulados localmente)
- * Internally calls BMFA for normalization if available
- * Registers biometric validation with stroke data and issues ARC 2 (SIMULADO)
+ * devStepUp: development helper to complete a pending login_session without JWKS.
+ * Accepts { login_id, score, confidence } and issues a final token with arc '2'.
  */
-async function devStepUp({ login_id, score, confidence, stroke_points, stroke_duration_ms, timestamp }) {
+async function devStepUp({ login_id, score = 0, confidence = 0.9 }) {
   if (process.env.NODE_ENV !== 'development') {
     const error = new Error('devStepUp only allowed in development');
     error.statusCode = 403;
@@ -249,68 +278,12 @@ async function devStepUp({ login_id, score, confidence, stroke_points, stroke_du
     throw error;
   }
 
-  // Intentar llamar a BMFA para normalización
-  let normalizedPoints = stroke_points;
-  let bmfaResult = null;
-  
-  if (stroke_points && Array.isArray(stroke_points)) {
-    // Obtener temp_token para autenticar contra BMFA
-    const tempToken = session.temp_token;
-    
-    bmfaResult = await callBMFA({
-      user_id: session.user_id,
-      login_id,
-      nonce: session.nonce,
-      stroke_points,
-      stroke_duration_ms,
-      timestamp,
-      tempToken
-    });
-    
-    if (bmfaResult && bmfaResult.normalized_points) {
-      normalizedPoints = bmfaResult.normalized_points;
-      logger.info(`Using BMFA normalized points: ${bmfaResult.point_count} points`);
-    } else {
-      logger.info('BMFA not available, using original stroke_points');
-    }
-  }
-
-  // Si no se proporciona score, simularlo basado en stroke_points
-  if (score === undefined || score === null) {
-    // Simulación básica: más puntos = mejor score (máx 0.95)
-    const pointCount = normalizedPoints?.length || 0;
-    score = Math.min(0.95, 0.70 + (pointCount / 100) * 0.25);
-  }
-  
-  // Si no se proporciona confidence, usar default alto
-  if (confidence === undefined || confidence === null) {
-    confidence = 0.92;
-  }
-
   const threshold = parseFloat(process.env.BIOMETRIC_SCORE_THRESHOLD || '0.85');
   if (typeof score !== 'number') score = parseFloat(score);
   if (score < threshold) {
     const error = new Error('Biometric verification failed (score below threshold)');
     error.statusCode = 401;
     throw error;
-  }
-
-  // Build assertion claims with stroke data if provided
-  const assertionClaims = {
-    dev_mode: true,
-    score,
-    confidence,
-    method: 'dev-simulated'
-  };
-  
-  if (normalizedPoints && Array.isArray(normalizedPoints)) {
-    assertionClaims.stroke_count = normalizedPoints.length;
-    assertionClaims.original_stroke_count = stroke_points?.length;
-    assertionClaims.stroke_duration_ms = stroke_duration_ms;
-    assertionClaims.timestamp = timestamp;
-    assertionClaims.bmfa_processed = bmfaResult !== null;
-    assertionClaims.was_padded = bmfaResult?.was_padded || false;
-    assertionClaims.stroke_points = normalizedPoints; // Store normalized points
   }
 
   // Register biometric validation in audit system (dev mode)
@@ -325,7 +298,12 @@ async function devStepUp({ login_id, score, confidence, stroke_points, stroke_du
       'accepted',              // p_decision
       score,                   // p_confidence_score
       null,                    // p_assertion_jws (null en modo dev)
-      JSON.stringify(assertionClaims), // p_assertion_claims (incluye stroke_points)
+      JSON.stringify({         // p_assertion_claims
+        dev_mode: true,
+        score,
+        confidence,
+        method: 'dev-simulated'
+      }),
       null,                    // p_device_fingerprint
       null                     // p_ip_address
     ]
@@ -343,14 +321,13 @@ async function devStepUp({ login_id, score, confidence, stroke_points, stroke_du
         verified_at: new Date().toISOString(),
         score,
         confidence,
-        stroke_count: stroke_points?.length,
         method: 'dev-simulated'
       }
     }
   });
 
   await sessionModel.markSessionCompleted(login_id, finalToken);
-  logger.info(`Dev step-up completed for login ${login_id} (${stroke_points?.length || 0} stroke points, validation_id=${validationId})`);
+  logger.info(`Dev step-up completed for login ${login_id} (validation_id=${validationId})`);
 
   return finalToken;
 }

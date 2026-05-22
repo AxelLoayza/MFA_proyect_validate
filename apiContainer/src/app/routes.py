@@ -143,3 +143,120 @@ async def health_check() -> dict:
         "version": "1.0.0",
         "message": "Ready to normalize biometric data"
     }
+
+
+@router.post("/auth/google/verify")
+async def verify_google(request: dict) -> dict:
+    """
+    Endpoint Google OAuth - SDK intermediario
+    
+    Recibe id_token de Backend Node.js y delega a Cloud Service
+    
+    Entrada:
+    {
+      "id_token": "eyJhbGciOiJSUzI1NiIsImtpZCI6Ijk4Y..."
+    }
+    
+    Salida:
+    {
+      "success": True,
+      "access_token": "arc_0.5_token",
+      "arc": "0.5",
+      "amr": ["federated"],
+      "user": {...},
+      "arcSessionId": "..."
+    }
+    """
+    try:
+        id_token = request.get("id_token")
+        access_token = request.get("access_token")
+
+        if not id_token and not access_token:
+            raise HTTPException(
+                status_code=400,
+                detail="id_token o access_token requerido"
+            )
+
+        logger.info("[API Routes] Verificando Google token")
+
+        # Importar aquí para evitar circular imports
+        from .google_service import verify_google_token, verify_google_access
+
+        if id_token:
+            result = await verify_google_token(id_token)
+        else:
+            # access_token flow
+            result = await verify_google_access(access_token)
+        
+        logger.info(f"[API Routes] ✓ Google token verificado, ARC {result['arc']}")
+        
+        return result
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[API Routes] Error en Google verify: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Google verification failed: {str(e)}"
+        )
+
+
+@router.post("/auth/google/exchange")
+async def exchange_google_code(request: dict) -> dict:
+    """
+    Endpoint Google OAuth Code Exchange - SDK intermediario
+    
+    Recibe authorization_code de Backend Node.js y delega a Cloud Service
+    
+    Flujo Code Flow + PKCE:
+    1. Backend Node.js envía authorization_code
+    2. SDK (este servicio) envía a Cloud Service
+    3. Cloud Service intercambia con Google (tiene CLIENT_SECRET)
+    4. Cloud Service extrae datos, firma ARC 0.5, retorna
+    
+    Entrada:
+    {
+      "code": "4/0AY0e-g...",
+      "redirect_uri": "https://localhost:4000/api/auth/callback/google"
+    }
+    
+    Salida:
+    {
+      "success": True,
+      "access_token": "arc_0.5_token",
+      "arc": "0.5",
+      "amr": ["federated"],
+      "user": {...},
+      "arcSessionId": "..."
+    }
+    """
+    try:
+        code = request.get("code")
+        redirect_uri = request.get("redirect_uri")
+        
+        if not code:
+            raise HTTPException(
+                status_code=400,
+                detail="authorization_code requerido"
+            )
+        
+        logger.info("[API Routes] Intercambiando authorization_code con Cloud Service")
+        
+        # Importar aquí para evitar circular imports
+        from .google_service import exchange_google_code
+        
+        result = await exchange_google_code(code, redirect_uri)
+        
+        logger.info(f"[API Routes] ✓ Code intercambiado, ARC {result['arc']}")
+        
+        return result
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[API Routes] Error en Google exchange: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Google code exchange failed: {str(e)}"
+        )

@@ -5,7 +5,8 @@
   "main": "index.js",
   "scripts": {
     "start": "node src/server.js",
-    "dev": "nodemon --watch src --exec node src/server.js"
+    "dev": "nodemon --watch src --exec node src/server.js",
+    "migrate:login-sessions": "node src/scripts/ensure_login_sessions_google.js"
   },
   "keywords": [],
   "author": "",

@@ -15,7 +15,7 @@ class Settings:
 
     # ========== API SERVER ==========
     API_HOST: str = os.getenv("API_HOST", "0.0.0.0")
-    API_PORT: int = int(os.getenv("API_PORT", "9001"))
+    API_PORT: int = int(os.getenv("API_PORT", "8000"))
     ENVIRONMENT: str = os.getenv("ENVIRONMENT", "development")
     DEBUG: bool = ENVIRONMENT == "development"
 
@@ -38,6 +38,11 @@ class Settings:
     CLOUD_PROVIDER_PASSWORD: str = os.getenv("CLOUD_PROVIDER_PASSWORD", "your_secure_password_here")
     CLOUD_PROVIDER_TIMEOUT: int = int(os.getenv("CLOUD_PROVIDER_TIMEOUT", "30"))
     CLOUD_PROVIDER_VERIFY_SSL: bool = os.getenv("CLOUD_PROVIDER_VERIFY_SSL", "true").lower() == "true"
+
+    # ========== CLOUD SERVICE (SDK INTEGRATION) ==========
+    CLOUD_SERVICE_URL: str = os.getenv("CLOUD_SERVICE_URL", "http://localhost:4003")
+    SDK_API_KEY: str = os.getenv("SDK_API_KEY", "sdk_default_key")
+    SDK_SECRET: str = os.getenv("SDK_SECRET", "sdk_default_secret")
 
     # ========== BIOMETRIC NORMALIZATION ==========
     MIN_STROKE_POINTS: int = int(os.getenv("MIN_STROKE_POINTS", "100"))

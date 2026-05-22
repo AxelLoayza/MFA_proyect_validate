@@ -1,0 +1,53 @@
+# Workspace-level ignores
+
+# Python virtual environments and local runtimes
+cloud/
+venv/
+.venv/
+env/
+
+# Python cache and build artifacts
+**/__pycache__/
+**/*.py[cod]
+**/*.pyo
+**/*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Node and generic caches
+**/node_modules/
+**/.cache/
+**/.dart_tool/
+**/.flutter-plugins-dependencies
+
+# Build outputs
+**/build/
+**/dist/
+**/coverage/
+
+# Logs
+**/logs/
+**/*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Local env files
+**/.env
+**/.env.local
+**/.env.*.local
+!**/.env.example
+
+# OS/editor
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Temporary markdown/context docs (non-essential)
+ARQUITECTURA_ARC_SDK.md
+CONTEXTO_SOLUCION.md
+CONTRATO_ENDPOINTS_POLITICAS_GOOGLE_ARC.md
+FLUTTER_CODE_FLOW_PKCE_ACTUALIZADO.md
+apiContainer/CONTEXTO.md
+client/backend/CONTEXTO.md

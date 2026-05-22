@@ -1,15 +1,18 @@
-import 'package:flutter/material.dart';
-import 'package:http/http.dart' as http;
 import 'dart:convert';
+
+import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
+import 'package:google_sign_in/google_sign_in.dart';
+import 'package:http/http.dart' as http;
+
 import 'enrollment_screen.dart';
 
-/// Clase para representar un punto del trazo biométrico
-/// Captura coordenadas x, y, tiempo relativo en milisegundos y presión
 class StrokePoint {
   final double x;
   final double y;
-  final int t; // Tiempo relativo en milisegundos desde el inicio del trazo
-  final double p; // Presión normalizada (0.0 a 1.0)
+  final int t;
+  final double p;
 
   StrokePoint({
     required this.x,
@@ -18,7 +21,6 @@ class StrokePoint {
     required this.p,
   });
 
-  /// Convierte el punto a JSON para envío al microservicio
   Map<String, dynamic> toJson() {
     return {
       'x': x,
@@ -29,40 +31,6 @@ class StrokePoint {
   }
 }
 
-/// Modelo para representar la respuesta del servidor en login
-class LoginResponse {
-  final String accessToken;
-  final String tokenType;
-  final String arc;
-  final String userId;
-  final int expiresIn;
-  final String? loginId; // Para futuro uso en step-up
-  final String? nonce;
-
-  LoginResponse({
-    required this.accessToken,
-    required this.tokenType,
-    required this.arc,
-    required this.userId,
-    required this.expiresIn,
-    this.loginId,
-    this.nonce,
-  });
-
-  factory LoginResponse.fromJson(Map<String, dynamic> json) {
-    return LoginResponse(
-      accessToken: json['access_token'] ?? '',
-      tokenType: json['token_type'] ?? 'Bearer',
-      arc: json['arc'] ?? '0.5',
-      userId: json['userId'] ?? '',
-      expiresIn: json['expires_in'] ?? 120,
-      loginId: json['login_id'],
-      nonce: json['nonce'],
-    );
-  }
-}
-
-/// Clase para pintar el trazo biométrico en el canvas
 class StrokePainter extends CustomPainter {
   final List<StrokePoint> points;
 
@@ -73,13 +41,12 @@ class StrokePainter extends CustomPainter {
     if (points.isEmpty) return;
 
     final paint = Paint()
-      ..color = const Color(0xFF1F2937) // Color gris oscuro
+      ..color = const Color(0xFF1F2937)
       ..strokeWidth = 2.5
       ..strokeCap = StrokeCap.round
       ..strokeJoin = StrokeJoin.round
       ..isAntiAlias = true;
 
-    // Conectar puntos con líneas individuales
     for (int i = 1; i < points.length; i++) {
       canvas.drawLine(
         Offset(points[i - 1].x, points[i - 1].y),
@@ -90,14 +57,9 @@ class StrokePainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(StrokePainter oldDelegate) {
-    // SIEMPRE repintar para que sea en tiempo real
-    return true;
-  }
+  bool shouldRepaint(StrokePainter oldDelegate) => true;
 }
 
-/// Pantalla principal de autenticación biométrica
-/// Implementa flujo: Login (email/password) -> Firma Biométrica -> Step-up
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
 
@@ -106,294 +68,161 @@ class LoginScreen extends StatefulWidget {
 }
 
 class _LoginScreenState extends State<LoginScreen> {
-  // Controladores de formulario
-  final TextEditingController _emailController = TextEditingController();
-  final TextEditingController _passwordController = TextEditingController();
+  final String _backendUrl = dotenv.env['BACKEND_URL'] ?? 'http://localhost:4000';
+  final String _googleClientId =
+      dotenv.env['GOOGLE_CLIENT_ID'] ?? '246681881290-tpsk8rdg9rlt9t69j7o6dnfjf6cq21uq.apps.googleusercontent.com';
 
-  // URL base del backend (ajustar según tu configuración)
-  static const String backendUrl = 'http://localhost:4000';
-
-  // Variables para captura biométrica
-  List<StrokePoint> _strokePoints = [];
-  bool _isDrawing = false;
-  DateTime? _strokeStartTime;
-
-  // Variables de estado de la autenticación
-  String? _tempToken; // Token temporal ARC 0.5
-  String? _loginId; // login_id para vincular con step-up
-  String _currentArc = ''; // Estado actual del ARC
-
-  // Variables de estado de la UI
+  GoogleSignIn? _googleSignIn;
+  String? _accessToken;
+  String? _arc;
+  String? _email;
+  String? _name;
   bool _isLoading = false;
-  bool _isLoginMode = true; // Controla si estamos en Login o Registro
-  bool _isPasswordVisible = false;
-  String _statusMessage = '';
-  int _authStep = 1; // 1: Login, 2: Firma, 3: Completado
+  String _statusMessage = 'Inicia sesión con Google para obtener ARC 0.5.';
 
   @override
   void dispose() {
-    _emailController.dispose();
-    _passwordController.dispose();
+    _googleSignIn?.disconnect();
     super.dispose();
   }
 
-  /// Realiza login o registro con email/password contra el backend Node.js
-  /// Retorna token temporal ARC 0.5 y manda a Enrollment si es registro nuevo
-  Future<void> _performLoginOrRegister() async {
-    if (_emailController.text.isEmpty || _passwordController.text.isEmpty) {
-      _showMessage('Por favor completa email y contraseña');
-      return;
-    }
-
-    try {
-      setState(() {
-        _isLoading = true;
-        _statusMessage = _isLoginMode ? 'Autenticando...' : 'Creando cuenta...';
-      });
-
-      // Flujo de Registro 
-      if (!_isLoginMode) {
-        final regResponse = await http.post(
-          Uri.parse('$backendUrl/users/register'),
-          headers: {'Content-Type': 'application/json'},
-          body: jsonEncode({
-            'email': _emailController.text,
-            'password': _passwordController.text,
-            'role': 'user'
-          }),
-        );
-
-        if (regResponse.statusCode != 201) {
-          final error = jsonDecode(regResponse.body);
-          setState(() {
-            _statusMessage = 'Error en registro: ${error['error'] ?? 'Registro fallido'}';
-          });
-          _showMessage('No se pudo crear la cuenta');
-          setState(() { _isLoading = false; });
-          return;
-        }
-      }
-
-      // Paso común: Login para obtener el ARC 0.5
-      final response = await http.post(
-        Uri.parse('$backendUrl/auth/login'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({
-          'email': _emailController.text,
-          'password': _passwordController.text,
-        }),
+  GoogleSignIn _buildGoogleSignIn() {
+    if (kIsWeb) {
+      return GoogleSignIn(
+        clientId: _googleClientId,
+        scopes: const ['email', 'profile', 'openid'],
       );
-
-      if (response.statusCode == 200) {
-        final loginResp = LoginResponse.fromJson(jsonDecode(response.body));
-        
-        setState(() {
-          _tempToken = loginResp.accessToken;
-          _loginId = loginResp.loginId; // Guardar login_id para step-up
-          _currentArc = loginResp.arc;
-          _authStep = 2; // Para cuando regresen del registro o sea solo login
-        });
-
-        if (!_isLoginMode) {
-          _statusMessage = 'Cuenta creada. Necesitamos registrar tu firma.';
-          _showMessage('✓ Registro exitoso. Ahora captura tus 5 firmas.');
-          
-          if (!mounted) return;
-          // Automáticamente los enviamos a la pantalla de enrolamiento
-          Navigator.of(context).push(
-            MaterialPageRoute(
-              builder: (context) => EnrollmentScreen(jwtToken: _tempToken!),
-            ),
-          ).then((_) {
-            // Cuando vuelvan, se aseguran de estar en modo login
-            setState(() {
-              _isLoginMode = true;
-              _authStep = 1;
-              _statusMessage = 'Firma configurada. Por favor, inicia sesión de nuevo.';
-            });
-          });
-        } else {
-          setState(() {
-            _statusMessage = 'Login exitoso (ARC ${loginResp.arc}). Dibuja tu firma.';
-            _strokePoints.clear();
-          });
-          _showMessage('✓ Login exitoso. Ahora captura tu firma biométrica para completar el MFA.');
-        }
-      } else {
-        final error = jsonDecode(response.body);
-        setState(() {
-          _statusMessage = 'Error: ${error['error'] ?? 'Login fallido'}';
-        });
-        _showMessage('Credenciales inválidas');
-      }
-    } catch (e) {
-      setState(() {
-        _statusMessage = 'Error de conexión: $e';
-      });
-      _showMessage('Error conectando con el servidor');
-    } finally {
-      setState(() {
-        _isLoading = false;
-      });
     }
+
+    return GoogleSignIn(
+      scopes: const ['email', 'profile', 'openid'],
+    );
   }
 
-  /// Realiza step-up enviando stroke_points a Node.js
-  /// Node.js internamente llamará a BMFA para normalización (si está disponible)
-  /// Por ahora: ARC 2 simulado (dev-step-up)
-  /// Futuro: Node.js recibirá signedAssertion de BMFA → ARC 1.0 (step-up)
-  Future<void> _performStepUp() async {
-    if (_tempToken == null || _strokePoints.isEmpty || _loginId == null) {
-      _showMessage('Primero debes capturar tu firma');
-      return;
-    }
+  Future<void> _signInWithGoogle() async {
+    setState(() {
+      _isLoading = true;
+      _statusMessage = 'Iniciando sesión con Google (Code Flow)...';
+    });
 
     try {
+      _googleSignIn ??= _buildGoogleSignIn();
+      
+      // Iniciar sesión con Google
+      final account = await _googleSignIn!.signIn();
+
+      if (account == null) {
+        setState(() {
+          _statusMessage = 'Inicio de sesión cancelado';
+          _isLoading = false;
+        });
+        return;
+      }
+
+      // Obtener información de autenticación
+      final auth = await account.authentication;
+      
+      // Intentar obtener authorization_code (mobile) o idToken/accessToken (web/fallback)
+      String? authCode = auth.serverAuthCode; // Mobile (authorization code)
+      final idToken = auth.idToken; // id_token (may be null on web)
+      final accessToken = auth.accessToken; // access_token returned by some web flows
+      
+      // En web, google_sign_in 6.2.1 no tiene serverAuthCode en authentication
+      // Usamos idToken como fallback que funciona en todas las plataformas
+      // Prefer serverAuthCode (mobile). Otherwise prefer id_token, otherwise use access_token as fallback.
+      if (authCode == null || authCode.isEmpty) {
+        if (idToken != null && idToken.isNotEmpty) {
+          authCode = idToken; // send as id_token
+        } else if (accessToken != null && accessToken.isNotEmpty) {
+          authCode = accessToken; // send as access_token
+        }
+      }
+
+      if (authCode == null || authCode.isEmpty) {
+        throw Exception('No se obtuvo authorization_code, id_token ni access_token de Google. Asegúrate de incluir el scope "openid" y permitir el retorno de tokens.');
+      }
+
       setState(() {
-        _isLoading = true;
-        _statusMessage = 'Enviando firma biométrica...';
+        _statusMessage = 'Intercambiando código con el servidor...';
       });
 
-      // Construir payload con stroke_points originales
-      // Node.js se encargará de llamar a BMFA si está disponible
-      final tracePayload = {
-        'login_id': _loginId,
-        'timestamp': DateTime.now().toIso8601String(),
-        'stroke_points': _strokePoints.map((p) => p.toJson()).toList(),
-        'stroke_duration_ms': _strokeStartTime != null 
-            ? DateTime.now().difference(_strokeStartTime!).inMilliseconds 
-            : 0,
-      };
+      // Determinar qué endpoint usar basado en si tenemos code o id_token
+      // Determinar qué endpoint y payload usar
+      String endpoint;
+      Map<String, dynamic> requestBody;
 
-      // Enviar a Node.js /auth/dev-step-up
-      // Node.js internamente puede llamar a BMFA para normalización
+      if (auth.serverAuthCode != null && auth.serverAuthCode!.isNotEmpty) {
+        endpoint = '/api/auth/google_exchange';
+        requestBody = {'code': authCode};
+      } else {
+        endpoint = '/api/auth/google/verify';
+        // Si tenemos idToken lo mandamos como id_token, si no mandamos access_token
+        if (idToken != null && idToken.isNotEmpty) {
+          requestBody = {'id_token': authCode};
+        } else {
+          requestBody = {'access_token': authCode};
+        }
+      }
+
       final response = await http.post(
-        Uri.parse('$backendUrl/auth/dev-step-up'),
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': 'Bearer $_tempToken',
-        },
-        body: jsonEncode(tracePayload),
+        Uri.parse('$_backendUrl$endpoint'),
+        headers: const {'Content-Type': 'application/json'},
+        body: jsonEncode(requestBody),
       );
 
-      if (response.statusCode == 200) {
-        final finalResp = jsonDecode(response.body);
-        
-        setState(() {
-          _currentArc = finalResp['arc'] ?? '1.0';
-          _authStep = 3;
-          _statusMessage = '✓ Trazo enviado exitosamente (ARC ${finalResp['arc']})';
-        });
-
-        _showMessage('¡Trazo enviado correctamente!');
-      } else {
-        final error = jsonDecode(response.body);
-        setState(() {
-          _statusMessage = 'Error en step-up: ${error['error'] ?? 'Error del servidor'}';
-        });
-        _showMessage('Error enviando el trazo. Intenta de nuevo.');
+      if (response.statusCode != 200) {
+        final errorBody = jsonDecode(response.body) as Map<String, dynamic>;
+        throw Exception(errorBody['error'] ?? errorBody['message'] ?? 'Intercambio fallido');
       }
+
+      final responseJson = jsonDecode(response.body) as Map<String, dynamic>;
+      final user = (responseJson['user'] as Map?)?.cast<String, dynamic>() ?? const {};
+
+      setState(() {
+        _accessToken = responseJson['access_token']?.toString();
+        _arc = responseJson['arc']?.toString();
+        _email = user['email']?.toString() ?? account.email;
+        _name = user['name']?.toString() ?? account.displayName;
+        _statusMessage = 'Sesión iniciada correctamente con ARC ${_arc ?? '0.5'}.';
+        _isLoading = false;
+      });
+
+      if (!mounted) return;
+      _showMessage('✓ Google Sign-In correcto. ARC ${_arc ?? '0.5'} obtenido.');
     } catch (e) {
       setState(() {
         _statusMessage = 'Error: $e';
-      });
-      _showMessage('Error procesando trazo: $e');
-    } finally {
-      setState(() {
         _isLoading = false;
       });
-    }
-  }
-
-  /// Reinicia el flujo de autenticación
-  void _resetAuth() {
-    setState(() {
-      _emailController.clear();
-      _passwordController.clear();
-      _strokePoints.clear();
-      _tempToken = null;
-      _loginId = null;
-      _currentArc = '';
-      _authStep = 1;
-      _statusMessage = '';
-      _strokeStartTime = null;
-    });
-  }
-
-  /// Gestiona eventos del trazo biométrico
-  /// Captura el inicio del trazo con presión real desde PointerEvent
-  void _onPointerDown(PointerDownEvent event) {
-    if (_tempToken == null) {
-      _showMessage('Primero debes iniciar sesión');
-      return;
-    }
-
-    setState(() {
-      _isDrawing = true;
-      _strokeStartTime = DateTime.now();
-      _strokePoints.clear();
-
-      final x = event.localPosition.dx;
-      final y = event.localPosition.dy;
-      // Presión real: rango 0.0 a 1.0+ dependiendo del dispositivo
-      final pressure = event.pressure.clamp(0.0, 1.0);
-
-      // Validar que el punto está dentro del área del canvas
-      if (x >= 0 && y >= 0 && y <= 240) {
-        _strokePoints.add(StrokePoint(
-          x: x,
-          y: y,
-          t: 0,
-          p: pressure,
-        ));
+      _showMessage('Error en inicio de sesión: ${e.toString()}');
+      
+      if (kDebugMode) {
+        debugPrint('[LoginScreen] Error: $e');
       }
-    });
-  }
-
-  /// Captura movimiento del trazo con presión real en cada punto
-  void _onPointerMove(PointerMoveEvent event) {
-    if (!_isDrawing || _strokeStartTime == null) return;
-
-    final timeDiff = DateTime.now().difference(_strokeStartTime!).inMilliseconds;
-    final x = event.localPosition.dx;
-    final y = event.localPosition.dy;
-    // Presión real del stylus/touch: se mide en cada movimiento
-    final pressure = event.pressure.clamp(0.0, 1.0);
-
-    // Validar que el punto está dentro del área del canvas
-    if (x >= 0 && y >= 0 && y <= 240) {
-      setState(() {
-        _strokePoints.add(StrokePoint(
-          x: x,
-          y: y,
-          t: timeDiff,
-          p: pressure,
-        ));
-      });
     }
   }
 
-  /// Captura el final del trazo
-  void _onPointerUp(PointerUpEvent event) {
+  Future<void> _continueToEnrollment() async {
+    if (_accessToken == null) return;
+
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => EnrollmentScreen(jwtToken: _accessToken!),
+      ),
+    );
+  }
+
+  Future<void> _resetSession() async {
+    await _googleSignIn?.signOut();
     setState(() {
-      _isDrawing = false;
+      _accessToken = null;
+      _arc = null;
+      _email = null;
+      _name = null;
+      _statusMessage = 'Inicia sesión con Google para obtener ARC 0.5.';
     });
   }
 
-  /// Maneja cancelación de trazo
-  void _onPointerCancel(PointerCancelEvent event) {
-    setState(() {
-      _isDrawing = false;
-    });
-  }
-
-  void _clearStroke() {
-    setState(() {
-      _strokePoints.clear();
-    });
-  }
-
-  /// Muestra un mensaje al usuario
   void _showMessage(String message) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -407,415 +236,192 @@ class _LoginScreenState extends State<LoginScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.white,
+      backgroundColor: const Color(0xFFF8FAFC),
       body: SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.all(24.0),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              // Header
-              Container(
-                padding: const EdgeInsets.symmetric(vertical: 16.0),
-                decoration: const BoxDecoration(
-                  border: Border(
-                    bottom: BorderSide(color: Color(0xFFE5E7EB), width: 1),
-                  ),
-                ),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    const Text(
-                      'MFA - Autenticación',
-                      style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.w600,
-                        color: Color(0xFF1F2937),
-                      ),
+        child: Center(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(24),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 560),
+              child: Container(
+                padding: const EdgeInsets.all(28),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(28),
+                  border: Border.all(color: const Color(0xFFE5E7EB)),
+                  boxShadow: const [
+                    BoxShadow(
+                      color: Color(0x14000000),
+                      blurRadius: 30,
+                      offset: Offset(0, 18),
                     ),
-                    if (_currentArc.isNotEmpty)
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFF0D9488),
-                          borderRadius: BorderRadius.circular(20),
-                        ),
-                        child: Text(
-                          'ARC ${_currentArc}',
-                          style: const TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.w600,
-                            color: Colors.white,
-                          ),
-                        ),
-                      ),
                   ],
                 ),
-              ),
-
-              const SizedBox(height: 32),
-
-              // PASO 1: Login con email/password
-              if (_authStep == 1) ...[
-                Text(
-                  _isLoginMode ? 'Iniciar Sesión' : 'Crear Nueva Cuenta',
-                  style: const TextStyle(
-                    fontSize: 24,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.black,
-                  ),
-                ),
-                const SizedBox(height: 16),
-                Text(
-                  _isLoginMode 
-                      ? 'Ingresa tus credenciales para continuar'
-                      : 'Ingresa un email y una contraseña fuerte. \nDespués, registraremos tu firma biométrica única.',
-                  style: const TextStyle(
-                    fontSize: 14,
-                    color: Color(0xFF6B7280),
-                  ),
-                ),
-                const SizedBox(height: 24),
-
-                // Campo Email
-                TextFormField(
-                  controller: _emailController,
-                  enabled: !_isLoading,
-                  decoration: InputDecoration(
-                    hintText: 'Email',
-                    prefixIcon: const Icon(Icons.email, color: Color(0xFF9CA3AF)),
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(8),
-                      borderSide: const BorderSide(color: Color(0xFFD1D5DB)),
-                    ),
-                    enabledBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(8),
-                      borderSide: const BorderSide(color: Color(0xFFD1D5DB)),
-                    ),
-                    contentPadding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
-                  ),
-                ),
-                const SizedBox(height: 16),
-
-                // Campo Contraseña
-                TextFormField(
-                  controller: _passwordController,
-                  enabled: !_isLoading,
-                  obscureText: !_isPasswordVisible,
-                  decoration: InputDecoration(
-                    hintText: 'Contraseña',
-                    prefixIcon: const Icon(Icons.lock, color: Color(0xFF9CA3AF)),
-                    suffixIcon: IconButton(
-                      icon: Icon(
-                        _isPasswordVisible ? Icons.visibility : Icons.visibility_off,
-                        color: const Color(0xFF9CA3AF),
-                      ),
-                      onPressed: () {
-                        setState(() {
-                          _isPasswordVisible = !_isPasswordVisible;
-                        });
-                      },
-                    ),
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(8),
-                      borderSide: const BorderSide(color: Color(0xFFD1D5DB)),
-                    ),
-                    enabledBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(8),
-                      borderSide: const BorderSide(color: Color(0xFFD1D5DB)),
-                    ),
-                    contentPadding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
-                  ),
-                ),
-                const SizedBox(height: 24),
-
-                // Botón Login / Registro
-                ElevatedButton(
-                  onPressed: _isLoading ? null : _performLoginOrRegister,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF0D9488),
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(vertical: 14),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                  ),
-                  child: _isLoading
-                      ? const SizedBox(
-                          height: 20,
-                          width: 20,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
-                          ),
-                        )
-                      : Text(
-                          _isLoginMode ? 'Iniciar Sesión' : 'Registrarme y Configurar Biometría',
-                          style: const TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                ),
-                
-                const SizedBox(height: 12),
-                
-                // Toggle Login/Registro
-                TextButton(
-                  onPressed: _isLoading
-                      ? null
-                      : () {
-                          setState(() {
-                            _isLoginMode = !_isLoginMode;
-                            _statusMessage = '';
-                          });
-                        },
-                  child: Text(
-                    _isLoginMode
-                        ? "¿No tienes una cuenta? Regístrate aquí"
-                        : "¿Ya tienes cuenta? Inicia Sesión",
-                    style: const TextStyle(
-                      color: Color(0xFF0D9488),
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ),
-              ],
-
-              // PASO 2: Captura de firma biométrica
-              if (_authStep == 2) ...[
-                const Text(
-                  'Firma Biométrica',
-                  style: TextStyle(
-                    fontSize: 24,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.black,
-                  ),
-                ),
-                const SizedBox(height: 16),
-                const Text(
-                  'Dibuja tu firma para completar la autenticación\nEl sistema enviará los datos al servidor para validación',
-                  style: TextStyle(
-                    fontSize: 14,
-                    color: Color(0xFF6B7280),
-                  ),
-                ),
-                const SizedBox(height: 24),
-
-                // Área de firma - Listener captura eventos de puntero con presión
-                Listener(
-                  onPointerDown: _onPointerDown,
-                  onPointerMove: _onPointerMove,
-                  onPointerUp: _onPointerUp,
-                  onPointerCancel: _onPointerCancel,
-                  child: MouseRegion(
-                    child: Container(
-                      height: 240,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(18),
                       decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(
-                          color: _strokePoints.isNotEmpty
-                              ? const Color(0xFF0D9488)
-                              : const Color(0xFFE5E7EB),
-                          width: 2,
+                        gradient: const LinearGradient(
+                          colors: [Color(0xFF0F766E), Color(0xFF14B8A6)],
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
                         ),
+                        borderRadius: BorderRadius.circular(22),
                       ),
-                      child: Stack(
+                      child: const Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          // Canvas con CustomPaint
-                          CustomPaint(
-                            painter: StrokePainter(_strokePoints),
-                            size: Size.infinite,
-                          ),
-                          // Placeholder cuando no hay trazo
-                          if (_strokePoints.isEmpty)
-                            const Center(
-                              child: Column(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  Icon(
-                                    Icons.edit,
-                                    size: 48,
-                                    color: Color(0xFFD1D5DB),
-                                  ),
-                                  SizedBox(height: 12),
-                                  Text(
-                                    'Dibuja aquí',
-                                    style: TextStyle(
-                                      color: Color(0xFF9CA3AF),
-                                      fontSize: 16,
-                                      fontWeight: FontWeight.w500,
-                                    ),
-                                  ),
-                                ],
-                              ),
+                          Icon(Icons.verified_user_rounded, color: Colors.white, size: 40),
+                          SizedBox(height: 16),
+                          Text(
+                            'ARC Secure Access',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 28,
+                              fontWeight: FontWeight.w800,
                             ),
+                          ),
+                          SizedBox(height: 8),
+                          Text(
+                            'Accede con Google y recibe tu token ARC 0.5 para continuar con el enrolamiento biométrico.',
+                            style: TextStyle(
+                              color: Colors.white70,
+                              fontSize: 14,
+                              height: 1.4,
+                            ),
+                          ),
                         ],
                       ),
                     ),
-                  ),
-                ),
-                const SizedBox(height: 20),
-
-                // Botones
-                Row(
-                  children: [
-                    Expanded(
-                      child: OutlinedButton(
-                        onPressed: _isLoading ? null : _clearStroke,
+                    const SizedBox(height: 24),
+                    Text(
+                      _email == null ? 'Iniciar sesión' : 'Sesión activa',
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                        fontSize: 22,
+                        fontWeight: FontWeight.bold,
+                        color: Color(0xFF111827),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      _email == null
+                          ? 'Usa tu cuenta Google. El backend enviará el id_token al SDK y luego a Cloud Service.'
+                          : '${_name ?? ''}${_email != null ? ' • $_email' : ''}',
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                        fontSize: 14,
+                        color: Color(0xFF6B7280),
+                        height: 1.5,
+                      ),
+                    ),
+                    const SizedBox(height: 24),
+                    ElevatedButton.icon(
+                      onPressed: _isLoading ? null : _signInWithGoogle,
+                      icon: _isLoading
+                          ? const SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                            )
+                          : const Icon(Icons.login_rounded),
+                      label: Text(_email == null ? 'Iniciar con Google' : 'Reiniciar inicio de sesión'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF111827),
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 16),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                      ),
+                    ),
+                    if (_accessToken != null) ...[
+                      const SizedBox(height: 12),
+                      OutlinedButton(
+                        onPressed: _continueToEnrollment,
                         style: OutlinedButton.styleFrom(
-                          side: const BorderSide(color: Color(0xFFD1D5DB)),
-                          padding: const EdgeInsets.symmetric(vertical: 12),
+                          padding: const EdgeInsets.symmetric(vertical: 16),
+                          side: const BorderSide(color: Color(0xFF0F766E)),
                           shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(8),
+                            borderRadius: BorderRadius.circular(16),
                           ),
                         ),
-                        child: const Text(
-                          'Limpiar',
-                          style: TextStyle(
-                            color: Color(0xFF374151),
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: OutlinedButton(
-                        onPressed: _isLoading ? null : _resetAuth,
-                        style: OutlinedButton.styleFrom(
-                          side: const BorderSide(color: Color(0xFFD1D5DB)),
-                          padding: const EdgeInsets.symmetric(vertical: 12),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                        ),
-                        child: const Text(
-                          'Volver',
-                          style: TextStyle(
-                            color: Color(0xFF374151),
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      flex: 2,
-                      child: ElevatedButton(
-                        onPressed: _isLoading ? null : _performStepUp,
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: const Color(0xFF0D9488),
-                          foregroundColor: Colors.white,
-                          padding: const EdgeInsets.symmetric(vertical: 12),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                        ),
-                        child: _isLoading
-                            ? const SizedBox(
-                                height: 20,
-                                width: 20,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                  valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
-                                ),
-                              )
-                            : const Text(
-                                'Enviar Firma',
-                                style: TextStyle(
-                                  fontSize: 14,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-
-              // PASO 3: Autenticación completada
-              if (_authStep == 3) ...[
-                Container(
-                  padding: const EdgeInsets.all(24),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFF0FDF4),
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: const Color(0xFFBBF7D0)),
-                  ),
-                  child: Column(
-                    children: [
-                      const Icon(
-                        Icons.check_circle,
-                        color: Color(0xFF16A34A),
-                        size: 64,
-                      ),
-                      const SizedBox(height: 16),
-                      const Text(
-                        'Autenticación Exitosa',
-                        style: TextStyle(
-                          fontSize: 20,
-                          fontWeight: FontWeight.bold,
-                          color: Color(0xFF166534),
-                        ),
+                        child: const Text('Continuar al enrolamiento biométrico'),
                       ),
                       const SizedBox(height: 12),
-                      Text(
-                        'Token ARC: $_currentArc',
-                        style: const TextStyle(
-                          fontSize: 14,
-                          color: Color(0xFF166534),
-                        ),
-                      ),
-                      const SizedBox(height: 24),
-                      ElevatedButton(
-                        onPressed: _resetAuth,
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: const Color(0xFF0D9488),
-                          foregroundColor: Colors.white,
-                          padding: const EdgeInsets.symmetric(
-                            vertical: 12,
-                            horizontal: 32,
-                          ),
-                        ),
-                        child: const Text('Nueva Autenticación'),
+                      TextButton(
+                        onPressed: _resetSession,
+                        child: const Text('Cerrar sesión y limpiar estado'),
                       ),
                     ],
-                  ),
-                ),
-              ],
-
-              // Mensaje de estado
-              if (_statusMessage.isNotEmpty) ...[
-                const SizedBox(height: 24),
-                Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: _statusMessage.contains('Error')
-                        ? const Color(0xFFFEE2E2)
-                        : const Color(0xFFF0FDF4),
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(
-                      color: _statusMessage.contains('Error')
-                          ? const Color(0xFFFECACA)
-                          : const Color(0xFFBBF7D0),
+                    const SizedBox(height: 20),
+                    Container(
+                      padding: const EdgeInsets.all(14),
+                      decoration: BoxDecoration(
+                        color: _statusMessage.toLowerCase().contains('error')
+                            ? const Color(0xFFFEE2E2)
+                            : const Color(0xFFF0FDF4),
+                        borderRadius: BorderRadius.circular(14),
+                        border: Border.all(
+                          color: _statusMessage.toLowerCase().contains('error')
+                              ? const Color(0xFFFCA5A5)
+                              : const Color(0xFFBBF7D0),
+                        ),
+                      ),
+                      child: Text(
+                        _statusMessage,
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          color: _statusMessage.toLowerCase().contains('error')
+                              ? const Color(0xFFB91C1C)
+                              : const Color(0xFF166534),
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
                     ),
-                  ),
-                  child: Text(
-                    _statusMessage,
-                    style: TextStyle(
-                      color: _statusMessage.contains('Error')
-                          ? const Color(0xFF991B1B)
-                          : const Color(0xFF166534),
-                      fontSize: 14,
-                    ),
-                    textAlign: TextAlign.center,
-                  ),
+                    if (_accessToken != null) ...[
+                      const SizedBox(height: 16),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          _StatusChip(label: 'ARC ${_arc ?? '0.5'}'),
+                          const SizedBox(width: 10),
+                          _StatusChip(label: kIsWeb ? 'Web' : 'Mobile'),
+                        ],
+                      ),
+                    ],
+                  ],
                 ),
-              ],
-            ],
+              ),
+            ),
           ),
+        ),
+      ),
+    );
+  }
+}
+
+class _StatusChip extends StatelessWidget {
+  final String label;
+
+  const _StatusChip({required this.label});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: const Color(0xFFE0F2F1),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Text(
+        label,
+        style: const TextStyle(
+          color: Color(0xFF0F766E),
+          fontSize: 12,
+          fontWeight: FontWeight.w700,
         ),
       ),
     );

@@ -44,7 +44,7 @@ CREATE TABLE audit_events (
 -- Tabla para gestionar inicios de sesión temporales/step-up (login_sessions)
 CREATE TABLE IF NOT EXISTS login_sessions (
     login_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+    user_id UUID REFERENCES users(id) ON DELETE SET NULL,
     nonce TEXT,
     temp_token TEXT,
     final_token TEXT,
@@ -52,7 +52,15 @@ CREATE TABLE IF NOT EXISTS login_sessions (
     status VARCHAR(20) DEFAULT 'pending',
     created_at TIMESTAMP DEFAULT NOW(),
     completed_at TIMESTAMP,
-    expires_at TIMESTAMP NOT NULL
+    expires_at TIMESTAMP NOT NULL,
+    provider VARCHAR(30) DEFAULT 'local',
+    google_sub TEXT,
+    google_email VARCHAR(255),
+    google_client_id TEXT,
+    arc_level VARCHAR(20),
+    arc_session_id TEXT
 );
+
+-- Sesiones federadas Google: user_id puede permanecer NULL mientras no exista un usuario local.
 
 
