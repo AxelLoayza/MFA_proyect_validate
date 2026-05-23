@@ -23,7 +23,7 @@ const corsOrigins = process.env.CORS === '*'
   ? true  // Allow all origins
   : (process.env.CORS 
       ? process.env.CORS.split(',').map(o => o.trim())
-      : ['http://localhost:59671', 'http://localhost:61992','http://localhost:8080', 'http://localhost:8000']);
+      : ['http://localhost:59671', 'http://181.176.72.143:8080','http://localhost:61992','http://localhost:8080', 'http://localhost:8000']);
 
 app.use(cors({
   origin: corsOrigins,

@@ -11,12 +11,39 @@ Flujo:
 import os
 import logging
 import requests
+import json
 from typing import Optional, Dict, Any
 
 logger = logging.getLogger(__name__)
 
 CLOUD_SERVICE_URL = os.getenv("CLOUD_SERVICE_URL", "http://localhost:4003")
 SDK_API_KEY = os.getenv("SDK_API_KEY", "sdk_default_key")
+
+
+class CloudServiceError(Exception):
+    def __init__(self, status_code: int, message: str, payload: Optional[Dict[str, Any]] = None):
+        super().__init__(message)
+        self.status_code = status_code
+        self.payload = payload or {"error": "cloud_service_error", "message": message}
+
+
+def _raise_cloud_error(response: requests.Response, prefix: str) -> None:
+    raw_text = response.text or ""
+    payload: Dict[str, Any]
+
+    try:
+        payload = response.json() if raw_text else {}
+    except Exception:
+        payload = {}
+
+    if not payload:
+        payload = {
+            "error": "cloud_service_error",
+            "message": raw_text or "Cloud Service returned an empty error response"
+        }
+
+    message = payload.get("message") or payload.get("error") or f"{prefix}: status {response.status_code}"
+    raise CloudServiceError(response.status_code, message, payload)
 
 
 async def verify_google_token(id_token: str) -> Dict[str, Any]:
@@ -74,9 +101,7 @@ async def verify_google_token(id_token: str) -> Dict[str, Any]:
         if response.status_code != 200:
             logger.error(f"[SDK Google] Cloud Service retornó {response.status_code}")
             logger.error(f"[SDK Google] Respuesta: {response.text}")
-            raise Exception(
-                f"Cloud Service error: {response.status_code} - {response.text}"
-            )
+            _raise_cloud_error(response, "Google verify failed")
         
         result = response.json()
         
@@ -98,6 +123,8 @@ async def verify_google_token(id_token: str) -> Dict[str, Any]:
     except requests.exceptions.ConnectionError as e:
         logger.error(f"[SDK Google] Error de conexión: {str(e)}")
         raise Exception("Cloud Service unavailable")
+    except CloudServiceError:
+        raise
     except Exception as e:
         logger.error(f"[SDK Google] Error: {str(e)}")
         raise
@@ -163,9 +190,7 @@ async def exchange_google_code(code: str, redirect_uri: str = None) -> Dict[str,
         if response.status_code != 200:
             logger.error(f"[SDK Google Code Exchange] Cloud Service retornó {response.status_code}")
             logger.error(f"[SDK Google Code Exchange] Respuesta: {response.text}")
-            raise Exception(
-                f"Cloud Service error: {response.status_code} - {response.text}"
-            )
+            _raise_cloud_error(response, "Google code exchange failed")
         
         result = response.json()
         
@@ -187,6 +212,8 @@ async def exchange_google_code(code: str, redirect_uri: str = None) -> Dict[str,
     except requests.exceptions.ConnectionError as e:
         logger.error(f"[SDK Google Code Exchange] Error de conexión: {str(e)}")
         raise Exception("Cloud Service unavailable")
+    except CloudServiceError:
+        raise
     except Exception as e:
         logger.error(f"[SDK Google Code Exchange] Error: {str(e)}")
         raise
@@ -214,7 +241,7 @@ async def verify_google_access(access_token: str) -> Dict[str, Any]:
         if response.status_code != 200:
             logger.error(f"[SDK Google] Cloud Service retornó {response.status_code}")
             logger.error(f"[SDK Google] Respuesta: {response.text}")
-            raise Exception(f"Cloud Service error: {response.status_code} - {response.text}")
+            _raise_cloud_error(response, "Google access token verify failed")
 
         result = response.json()
 
@@ -230,6 +257,8 @@ async def verify_google_access(access_token: str) -> Dict[str, Any]:
             "expiresIn": result.get("expires_in", 3600)
         }
 
+    except CloudServiceError:
+        raise
     except Exception as e:
         logger.error(f"[SDK Google] Error (access): {str(e)}")
         raise

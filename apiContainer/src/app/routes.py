@@ -180,7 +180,7 @@ async def verify_google(request: dict) -> dict:
         logger.info("[API Routes] Verificando Google token")
 
         # Importar aquí para evitar circular imports
-        from .google_service import verify_google_token, verify_google_access
+        from .google_service import verify_google_token, verify_google_access, CloudServiceError
 
         if id_token:
             result = await verify_google_token(id_token)
@@ -191,6 +191,9 @@ async def verify_google(request: dict) -> dict:
         logger.info(f"[API Routes] ✓ Google token verificado, ARC {result['arc']}")
         
         return result
+    except CloudServiceError as e:
+        logger.error(f"[API Routes] Cloud Service error: {e.status_code} - {e.payload}")
+        raise HTTPException(status_code=e.status_code, detail=e.payload)
         
     except HTTPException:
         raise
@@ -244,13 +247,16 @@ async def exchange_google_code(request: dict) -> dict:
         logger.info("[API Routes] Intercambiando authorization_code con Cloud Service")
         
         # Importar aquí para evitar circular imports
-        from .google_service import exchange_google_code
+        from .google_service import exchange_google_code, CloudServiceError
         
         result = await exchange_google_code(code, redirect_uri)
         
         logger.info(f"[API Routes] ✓ Code intercambiado, ARC {result['arc']}")
         
         return result
+    except CloudServiceError as e:
+        logger.error(f"[API Routes] Cloud Service exchange error: {e.status_code} - {e.payload}")
+        raise HTTPException(status_code=e.status_code, detail=e.payload)
         
     except HTTPException:
         raise

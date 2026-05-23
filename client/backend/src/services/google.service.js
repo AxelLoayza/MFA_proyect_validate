@@ -93,9 +93,15 @@ async function verifyGoogleToken(idTokenOrAccessToken, tokenType = 'id_token') {
     // Re-lanzar con información del error
     if (error.response?.data) {
       const sdkError = error.response.data;
+      const sdkDetail = sdkError.detail || {};
       error.statusCode = error.response.status || 500;
-      error.message = sdkError.error || sdkError.message || error.message;
-      error.details = sdkError.details || sdkError.description;
+      error.message =
+        sdkError.error ||
+        sdkError.message ||
+        sdkDetail.error ||
+        sdkDetail.message ||
+        error.message;
+      error.details = sdkError.details || sdkError.description || sdkDetail;
     } else {
       error.statusCode = error.statusCode || 500;
     }
@@ -185,9 +191,15 @@ async function exchangeGoogleCode(code, redirectUri = null) {
     // Re-lanzar con información del error
     if (error.response?.data) {
       const sdkError = error.response.data;
+      const sdkDetail = sdkError.detail || {};
       error.statusCode = error.response.status || 500;
-      error.message = sdkError.error || sdkError.message || error.message;
-      error.details = sdkError.details || sdkError.description;
+      error.message =
+        sdkError.error ||
+        sdkError.message ||
+        sdkDetail.error ||
+        sdkDetail.message ||
+        error.message;
+      error.details = sdkError.details || sdkError.description || sdkDetail;
     } else {
       error.statusCode = error.statusCode || 500;
     }

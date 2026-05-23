@@ -171,8 +171,36 @@ class _LoginScreenState extends State<LoginScreen> {
       );
 
       if (response.statusCode != 200) {
-        final errorBody = jsonDecode(response.body) as Map<String, dynamic>;
-        throw Exception(errorBody['error'] ?? errorBody['message'] ?? 'Intercambio fallido');
+        Map<String, dynamic> errorBody = const {};
+        try {
+          errorBody = jsonDecode(response.body) as Map<String, dynamic>;
+        } catch (_) {
+          errorBody = {'error': 'http_${response.statusCode}', 'message': response.body};
+        }
+
+        final detail = (errorBody['details'] as Map?)?.cast<String, dynamic>() ??
+            (errorBody['detail'] as Map?)?.cast<String, dynamic>() ??
+            const <String, dynamic>{};
+
+        final errorCode =
+            errorBody['error']?.toString() ??
+            detail['error']?.toString() ??
+            'intercambio_fallido';
+        final errorMessage =
+            errorBody['message']?.toString() ??
+            detail['message']?.toString() ??
+            'Intercambio fallido';
+
+        if (response.statusCode == 404 && errorCode == 'needs_registration') {
+          setState(() {
+            _statusMessage = 'Tu cuenta requiere registro inicial con codigo de invitacion.';
+            _isLoading = false;
+          });
+          await _showRegistrationRequiredDialog(errorMessage);
+          return;
+        }
+
+        throw Exception('$errorCode: $errorMessage');
       }
 
       final responseJson = jsonDecode(response.body) as Map<String, dynamic>;
@@ -229,6 +257,26 @@ class _LoginScreenState extends State<LoginScreen> {
         content: Text(message),
         backgroundColor: Colors.teal,
         duration: const Duration(seconds: 3),
+      ),
+    );
+  }
+
+  Future<void> _showRegistrationRequiredDialog(String message) async {
+    if (!mounted) return;
+
+    await showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Registro requerido'),
+        content: Text(
+          '$message\n\nSolicita a tu administrador un codigo de invitacion activo para completar el registro inicial.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Entendido'),
+          ),
+        ],
       ),
     );
   }
@@ -330,8 +378,6 @@ class _LoginScreenState extends State<LoginScreen> {
                       label: Text(_email == null ? 'Iniciar con Google' : 'Reiniciar inicio de sesión'),
                       style: ElevatedButton.styleFrom(
                         backgroundColor: const Color(0xFF111827),
-                        foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(vertical: 16),
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(16),
                         ),
