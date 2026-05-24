@@ -1,7 +1,7 @@
 """
 Pydantic models for request/response validation
 """
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Literal
 from pydantic import BaseModel, Field, field_validator
 
 
@@ -50,6 +50,28 @@ class BiometricRequest(BaseModel):
         return v
 
 
+class EnrollmentSignatureRequest(BaseModel):
+    """Raw signature payload used for enrollment."""
+    timestamp: str = Field(..., description="ISO 8601 timestamp of capture")
+    stroke_points: List[StrokePoint] = Field(
+        ..., 
+        description="Raw signature points",
+        min_length=100,
+        max_length=1200
+    )
+    stroke_duration_ms: int = Field(..., description="Total duration in milliseconds", ge=0)
+    real_length: int = Field(..., description="Original length before any transport padding", ge=100)
+
+    @field_validator('stroke_points')
+    @classmethod
+    def validate_signature_length(cls, v):
+        if len(v) < 100:
+            raise ValueError(f'Too few points: {len(v)} < 100')
+        if len(v) > 1200:
+            raise ValueError(f'Too many points: {len(v)} > 1200')
+        return v
+
+
 class BiometricResponse(BaseModel):
     """Response payload to apiContainer"""
     is_valid: bool = Field(..., description="Whether signature is valid")
@@ -60,21 +82,25 @@ class BiometricResponse(BaseModel):
 
 
 class EnrollmentCloudRequest(BaseModel):
-    """Request para generar el Feature Maestro con 5 firmas"""
-    signatures: List[BiometricRequest] = Field(
+    """Request para generar el template de enrolamiento con 5 firmas."""
+    signatures: List[EnrollmentSignatureRequest] = Field(
         ...,
         min_length=5,
         max_length=5,
-        description="5 firmas normalizadas para extraer master feature"
+        description="5 firmas crudas para extraer el template de enrolamiento"
+    )
+    representation_strategy: Literal["dtw_medoid"] = Field(
+        default="dtw_medoid",
+        description="Estrategia de representación para el enrolamiento"
     )
 
 
 class MasterFeatureResponse(BaseModel):
     """Respuesta con el vector de características maestro"""
     status: str = Field(..., description="success | error")
-    master_feature: Dict[str, List[List[float]]] = Field(
+    master_feature: Dict[str, Any] = Field(
         ...,
-        description="Contiene las matrices 'mean' y 'std'"
+        description="Contiene el template de enrolamiento y metadata asociada"
     )
     message: str = Field(..., description="Mensaje de estado")
 

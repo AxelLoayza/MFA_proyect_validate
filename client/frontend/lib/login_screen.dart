@@ -5,8 +5,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:http/http.dart' as http;
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'enrollment_screen.dart';
+import 'signature_login_screen.dart';
 
 class StrokePoint {
   final double x;
@@ -77,6 +79,7 @@ class _LoginScreenState extends State<LoginScreen> {
   String? _arc;
   String? _email;
   String? _name;
+  bool _biometricEnrolled = false;
   bool _isLoading = false;
   String _statusMessage = 'Inicia sesión con Google para obtener ARC 0.5.';
 
@@ -206,17 +209,29 @@ class _LoginScreenState extends State<LoginScreen> {
       final responseJson = jsonDecode(response.body) as Map<String, dynamic>;
       final user = (responseJson['user'] as Map?)?.cast<String, dynamic>() ?? const {};
 
+      final accessToken = responseJson['access_token']?.toString();
+
       setState(() {
-        _accessToken = responseJson['access_token']?.toString();
+        _accessToken = accessToken;
         _arc = responseJson['arc']?.toString();
         _email = user['email']?.toString() ?? account.email;
         _name = user['name']?.toString() ?? account.displayName;
+        _biometricEnrolled = false;
         _statusMessage = 'Sesión iniciada correctamente con ARC ${_arc ?? '0.5'}.';
         _isLoading = false;
       });
 
+      if (accessToken != null && accessToken.isNotEmpty) {
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString('mfa_token', accessToken);
+      }
+
       if (!mounted) return;
       _showMessage('✓ Google Sign-In correcto. ARC ${_arc ?? '0.5'} obtenido.');
+
+      if (_accessToken != null) {
+        await _continueToNextStepAfterLogin();
+      }
     } catch (e) {
       setState(() {
         _statusMessage = 'Error: $e';
@@ -250,6 +265,58 @@ class _LoginScreenState extends State<LoginScreen> {
     }
   }
 
+  Future<Map<String, dynamic>?> _fetchCurrentUser(String token) async {
+    final response = await http.get(
+      Uri.parse('$_backendUrl/auth/me'),
+      headers: {'Authorization': 'Bearer $token'},
+    );
+
+    if (response.statusCode != 200) {
+      return null;
+    }
+
+    final payload = jsonDecode(response.body) as Map<String, dynamic>;
+    return (payload['user'] as Map?)?.cast<String, dynamic>() ?? const {};
+  }
+
+  Future<void> _continueToNextStepAfterLogin() async {
+    if (_accessToken == null) return;
+
+    final user = await _fetchCurrentUser(_accessToken!);
+    if (user == null) {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove('mfa_token');
+      return;
+    }
+
+    final biometricTemplate = user['biometricTemplate'];
+    final hasBiometric = biometricTemplate is Map && biometricTemplate['biometricProfileId'] != null;
+
+    final biometricResult = await Navigator.of(context).push<String>(
+      MaterialPageRoute(
+        builder: (_) => hasBiometric
+            ? SignatureLoginScreen(jwtToken: _accessToken!, backendUrl: _backendUrl)
+            : EnrollmentScreen(jwtToken: _accessToken!),
+      ),
+    );
+
+    if (biometricResult != null && biometricResult.isNotEmpty) {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('mfa_token', biometricResult);
+      setState(() {
+        _accessToken = biometricResult;
+        _arc = '1.0';
+        _biometricEnrolled = true;
+        _statusMessage = hasBiometric
+            ? 'Login biométrico completado. ARC 1.0 activo.'
+            : 'Enrolamiento completado. ARC 1.0 activo.';
+      });
+      if (!mounted) return;
+      _showMessage(hasBiometric
+          ? '✓ Login biométrico completado. ARC 1.0 activo.'
+          : '✓ Enrolamiento completado. ARC 1.0 activo.');
+    }
+  }
   Future<void> _resetSession() async {
     await _googleSignIn?.signOut();
     setState(() {
@@ -257,6 +324,7 @@ class _LoginScreenState extends State<LoginScreen> {
       _arc = null;
       _email = null;
       _name = null;
+      _biometricEnrolled = false;
       _statusMessage = 'Inicia sesión con Google para obtener ARC 0.5.';
     });
   }
@@ -393,7 +461,7 @@ class _LoginScreenState extends State<LoginScreen> {
                         ),
                       ),
                     ),
-                    if (_accessToken != null) ...[
+                    if (_accessToken != null && !_biometricEnrolled) ...[
                       const SizedBox(height: 12),
                       OutlinedButton(
                         onPressed: _continueToEnrollment,
@@ -406,6 +474,8 @@ class _LoginScreenState extends State<LoginScreen> {
                         ),
                         child: const Text('Continuar al enrolamiento biométrico'),
                       ),
+                    ],
+                    if (_accessToken != null) ...[
                       const SizedBox(height: 12),
                       TextButton(
                         onPressed: _resetSession,
@@ -443,6 +513,8 @@ class _LoginScreenState extends State<LoginScreen> {
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
                           _StatusChip(label: 'ARC ${_arc ?? '0.5'}'),
+                          const SizedBox(width: 10),
+                          _StatusChip(label: _biometricEnrolled ? 'Firma registrada' : 'Firma pendiente'),
                           const SizedBox(width: 10),
                           _StatusChip(label: kIsWeb ? 'Web' : 'Mobile'),
                         ],

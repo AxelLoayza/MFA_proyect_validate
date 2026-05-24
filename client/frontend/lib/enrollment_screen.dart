@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'login_screen.dart'; // Importamos StrokePoint y StrokePainter
 
 class EnrollmentScreen extends StatefulWidget {
@@ -97,8 +98,13 @@ class _EnrollmentScreenState extends State<EnrollmentScreen> {
 
       if (response.statusCode == 201 || response.statusCode == 200) {
         final responseJson = jsonDecode(response.body) as Map<String, dynamic>;
+        final accessToken = responseJson['access_token']?.toString();
+        if (accessToken != null && accessToken.isNotEmpty) {
+          final prefs = await SharedPreferences.getInstance();
+          await prefs.setString('mfa_token', accessToken);
+        }
         if (!mounted) return;
-        _showSuccessDialog(responseJson['access_token']?.toString());
+        _showSuccessDialog(accessToken);
       } else {
         // ERROR DEL SERVIDOR
         final errorBody = jsonDecode(response.body);

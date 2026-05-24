@@ -120,6 +120,86 @@ def generate_master_feature(list_of_signatures: List[Tuple[np.ndarray, np.ndarra
     }
 
 
+def compute_dtw_medoid_raw(signatures: List[List]) -> Tuple[int, List[List[float]], List[List[float]]]:
+    """
+    Compute the most representative raw signature using DTW medoid.
+
+    The medoid is selected over the x/y trajectory of the raw signatures,
+    preserving the natural shape of one real sample instead of averaging it.
+    """
+    trajectories: List[np.ndarray] = []
+    original_trajectories: List[np.ndarray] = []
+
+    for signature_points in signatures:
+        original_trajectory = np.array([[p.x, p.y] for p in signature_points], dtype=float)
+        if len(original_trajectory) < 2:
+            raise ValueError("No valid trajectory points found for DTW medoid")
+        original_trajectories.append(original_trajectory)
+        trajectories.append(resample_xy_trajectory(original_trajectory, target_points=200))
+
+    n_signatures = len(trajectories)
+    distance_matrix = np.zeros((n_signatures, n_signatures), dtype=float)
+
+    for i in range(n_signatures):
+        for j in range(i + 1, n_signatures):
+            distance = dtw_distance_2d(trajectories[i], trajectories[j])
+            distance_matrix[i, j] = distance
+            distance_matrix[j, i] = distance
+
+    average_distances = distance_matrix.mean(axis=1)
+    medoid_index = int(np.argmin(average_distances))
+    medoid_sequence = original_trajectories[medoid_index].tolist()
+
+    logger.info(
+        f"DTW raw medoid selected: index={medoid_index}, average_distance={average_distances[medoid_index]:.4f}"
+    )
+
+    return medoid_index, medoid_sequence, distance_matrix.tolist()
+
+
+def resample_xy_trajectory(trajectory: np.ndarray, target_points: int = 200) -> np.ndarray:
+    """
+    Resample a raw x/y trajectory to a fixed number of points for DTW comparison.
+
+    This keeps the enrollment path lightweight without changing the stored medoid.
+    """
+    n_points = len(trajectory)
+
+    if n_points <= 2 or n_points <= target_points:
+        return trajectory
+
+    original_index = np.linspace(0.0, 1.0, n_points)
+    target_index = np.linspace(0.0, 1.0, target_points)
+
+    resampled = np.zeros((target_points, 2), dtype=float)
+    resampled[:, 0] = np.interp(target_index, original_index, trajectory[:, 0])
+    resampled[:, 1] = np.interp(target_index, original_index, trajectory[:, 1])
+    return resampled
+
+
+def dtw_distance_2d(sequence_a: np.ndarray, sequence_b: np.ndarray) -> float:
+    """Compute DTW distance between two 2D trajectories using Euclidean cost."""
+    len_a = len(sequence_a)
+    len_b = len(sequence_b)
+
+    if len_a == 0 or len_b == 0:
+        return float("inf")
+
+    cost_matrix = np.full((len_a + 1, len_b + 1), np.inf, dtype=float)
+    cost_matrix[0, 0] = 0.0
+
+    for i in range(1, len_a + 1):
+        for j in range(1, len_b + 1):
+            point_cost = float(np.linalg.norm(sequence_a[i - 1] - sequence_b[j - 1]))
+            cost_matrix[i, j] = point_cost + min(
+                cost_matrix[i - 1, j],
+                cost_matrix[i, j - 1],
+                cost_matrix[i - 1, j - 1],
+            )
+
+    return float(cost_matrix[len_a, len_b])
+
+
 def recover_original_sequence(stroke_points: List, real_length: int) -> np.ndarray:
     """
     Recuperar secuencia original eliminando el padding aplicado en apiContainer

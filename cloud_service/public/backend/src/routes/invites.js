@@ -42,8 +42,22 @@ router.post('/', async (req, res) => {
     if (!email) return res.status(400).json({ error: 'missing_email' })
 
     let tenant = null
-    if (tenantId) tenant = await Tenant.findById(tenantId)
-    if (!tenant && tenantKey) tenant = await Tenant.findOne({ tenantKey })
+
+    if (tenantId && tenantKey) {
+      const tenantById = await Tenant.findById(tenantId)
+      const tenantByKey = await Tenant.findOne({ tenantKey })
+
+      if (!tenantById || !tenantByKey || tenantById._id.toString() !== tenantByKey._id.toString()) {
+        return res.status(400).json({ error: 'tenant_mismatch', message: 'tenantKey and tenantId must reference the same tenant' })
+      }
+
+      tenant = tenantById
+    } else if (tenantId) {
+      tenant = await Tenant.findById(tenantId)
+    } else if (tenantKey) {
+      tenant = await Tenant.findOne({ tenantKey })
+    }
+
     if (!tenant) return res.status(404).json({ error: 'tenant_not_found' })
 
     const code = generateInviteCode(tenant.tenantKey || tenantKey)

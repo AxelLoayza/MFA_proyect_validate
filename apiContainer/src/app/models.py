@@ -9,7 +9,7 @@ Flujo:
 4. Retorna resultado
 """
 from pydantic import BaseModel, Field
-from typing import List, Optional
+from typing import List, Optional, Literal
 from datetime import datetime
 
 
@@ -70,15 +70,48 @@ class NormalizationResponse(BaseModel):
     error: str | None = None  # Optional error message
 
 
+class EnrollmentSignatureRequest(BaseModel):
+    """
+    Firma individual enviada en el flujo de enrolamiento.
+    Se valida estructura y tamaño, pero no se extraen features adicionales.
+    """
+    timestamp: str = Field(..., description="ISO 8601 timestamp de captura")
+    stroke_points: List[StrokePoint] = Field(
+        ...,
+        min_length=100,
+        max_length=1200,
+        description="Puntos crudos del trazo"
+    )
+    stroke_duration_ms: int = Field(..., ge=0, description="Duración total en ms")
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "timestamp": "2025-11-14T10:30:00Z",
+                "stroke_points": [
+                    {"x": 100.5, "y": 150.3, "t": 0, "p": 0.8},
+                    {"x": 105.2, "y": 152.1, "t": 50, "p": 0.85},
+                    {"x": 110.0, "y": 154.8, "t": 100, "p": 0.9}
+                ],
+                "stroke_duration_ms": 2500
+            }
+        }
+
+
 class EnrollmentRequest(BaseModel):
     """
-    Request que envía Node.js con 5 firmas para enrolamiento
+    Request que envía Node.js con 5 firmas para enrolamiento.
+    No incluye features extras: sólo estructura, tamaño y trazos crudos.
     """
-    signatures: List[NormalizationRequest] = Field(
+    signatures: List[EnrollmentSignatureRequest] = Field(
         ...,
         min_length=5,
         max_length=5,
         description="Exactamente 5 firmas para el enrolamiento de biometría"
+    )
+    representation_strategy: Literal["dtw_medoid"] = Field(
+        default="dtw_medoid",
+        description="Estrategia de enrolamiento biometrico"
     )
 
 

@@ -1,5 +1,5 @@
 """
-Cloud Service Communication - Send normalized data to ML service via TLS/HTTPS
+Cloud Service Communication - Send biometric data to ML service via TLS/HTTPS
 """
 import requests
 import logging
@@ -7,25 +7,24 @@ from typing import Dict, Any, List
 from fastapi import HTTPException, status
 from .config import get_settings
 from .security import create_basic_auth_header
-from .models import StrokePoint, NormalizationRequest
-from typing import Dict, Any, List
+from .models import StrokePoint, EnrollmentSignatureRequest
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
 
-def send_enrollment_to_ml_service(normalized_payloads: List[Dict[str, Any]]) -> Dict[str, Any]:
+def send_enrollment_to_ml_service(signatures: List[Dict[str, Any]], representation_strategy: str = "dtw_medoid") -> Dict[str, Any]:
     """
-    Envía 5 firmas ya normalizadas (pre-padding) al microservicio Cloud
-    para solicitar la generación del "Master Feature".
+    Envía 5 firmas crudas al microservicio Cloud para solicitar el template
+    de enrolamiento basado en DTW medoid.
     
     Args:
-       normalized_payloads: Lista de 5 diccionarios con la estructura:
-                            {"normalized_stroke": [...], "real_length": val, "features": {...}}
+       signatures: Lista de 5 diccionarios con la estructura:
+                    {"timestamp": str, "stroke_points": [...], "stroke_duration_ms": int}
     """
     try:
-        # Wrap en el modelo EnrollmentCloudRequest (que espera la API /api/biometric/enroll)
         payload = {
-            "signatures": normalized_payloads
+            "signatures": signatures,
+            "representation_strategy": representation_strategy,
         }
         
         auth_header = create_basic_auth_header(

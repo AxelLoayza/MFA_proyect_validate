@@ -13,7 +13,7 @@ from .utils import (
     get_client_ip, 
     validate_stroke_points
 )
-from .preprocessing import preprocess_signature, generate_master_feature
+from .preprocessing import preprocess_signature, compute_dtw_medoid_raw
 
 logger = logging.getLogger(__name__)
 
@@ -166,12 +166,12 @@ async def enroll_biometric(
     authenticated: bool = Depends(verify_credentials)
 ):
     """
-    Endpoint para RECIBIR 5 FIRMAS y RETORNAR EL MASTER FEATURE.
-    No valida contra la base de datos ni consulta red neuronal.
-    Genera el tensor matemático (mean) y rango de tolerancia (std)
+    Endpoint para RECIBIR 5 FIRMAS crudas y RETORNAR EL TEMPLATE DE ENROLAMIENTO.
+    No suaviza ni extrae features adicionales: conserva la forma de la firma.
     """
     client_ip = get_client_ip(request)
     logger.info(f"Received MERGE/ENROLLMENT request from {client_ip}")
+    logger.info(f"Enrollment representation strategy: {payload.representation_strategy}")
 
     # Validar limitación de tasa
     if not rate_limiter.check_rate_limit(client_ip):
@@ -180,38 +180,36 @@ async def enroll_biometric(
             detail="Rate limit exceeded"
         )
     
-    list_preprocessed = []
-    
     try:
-        # Preprocesar las 5 firmas
+        raw_signatures = []
+
+        # Validar y registrar las 5 firmas crudas
         for i, sig in enumerate(payload.signatures):
-             # Validar stroke points
-            is_valid, error_msg = validate_stroke_points(sig.normalized_stroke, min_points=100, max_points=1200)
+            is_valid, error_msg = validate_stroke_points(sig.stroke_points, min_points=100, max_points=1200)
             if not is_valid:
                 raise ValueError(f"Firma #{i+1} inválida: {error_msg}")
             
             if sig.real_length < 100:
-                 raise ValueError(f"Firma #{i+1} muy corta: real_length={sig.real_length}")
-                 
-            # Extracción Matemática / Preprocesamiento
-            features_array, mask = preprocess_signature(
-                stroke_points=sig.normalized_stroke,
-                real_length=sig.real_length,
-                target_frequency=100,
-                target_length=400
-            )
-            list_preprocessed.append((features_array, mask))
+                raise ValueError(f"Firma #{i+1} muy corta: real_length={sig.real_length}")
+
+            raw_signatures.append(sig.stroke_points)
             
         print("=" * 80)
-        print("✅ TODAS LAS 5 FIRMAS PREPROCESADAS CORRECTAMENTE PARA ENROLAMIENTO")
+        print("✅ TODAS LAS 5 FIRMAS VALIDADAS CORRECTAMENTE PARA ENROLAMIENTO")
         print("=" * 80)
-        
-        # Generar "Feature Maestro" matemático
-        master_feature = generate_master_feature(list_preprocessed)
+
+        medoid_index, medoid_sequence, pairwise_distances = compute_dtw_medoid_raw(raw_signatures)
+
+        master_feature = {
+            "dtw_medoid_index": medoid_index,
+            "dtw_medoid": medoid_sequence,
+            "dtw_pairwise_distances": pairwise_distances,
+            "representation_strategy": payload.representation_strategy,
+        }
         
         return MasterFeatureResponse(
             status="success",
-            message="Feature Maestro generado a partir de 5 firmas biométricas",
+            message="Biometric enrollment template generated successfully",
             master_feature=master_feature
         )
         
@@ -225,7 +223,7 @@ async def enroll_biometric(
         logger.error(f"Unexpected preprocessing error: {str(e)}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Internal preprocessing error"
+            detail="Internal preprocessing error"
         )
         
         # TODO: Process with LSTM model

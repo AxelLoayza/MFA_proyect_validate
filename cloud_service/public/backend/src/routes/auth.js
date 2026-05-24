@@ -116,6 +116,13 @@ router.post('/google', async (req, res) => {
       return res.status(404).json({ error: 'needs_registration', message: 'El correo no está registrado. Debes completar el registro primero.' });
     }
 
+    if (!user.tenantId) {
+      return res.status(403).json({
+        error: 'tenant_required',
+        message: 'Usuario sin tenant asociado. Debes registrarte con tenantKey o aceptar una invitación válida antes de continuar.'
+      });
+    }
+
     // Sign server JWT with RS256 and record session (ARC)
     const privateKey = fs.readFileSync(process.env.JWT_PRIVATE_KEY_PATH, 'utf8');
     const expirationSeconds = parseInt(process.env.JWT_EXPIRATION_SECONDS || '3600', 10);
@@ -124,7 +131,8 @@ router.post('/google', async (req, res) => {
       {
         sub: user._id.toString(),
         email: user.email,
-        name: user.name
+        name: user.name,
+        tenantId: user.tenantId?.toString() || null
       },
       privateKey,
       { algorithm: 'RS256', expiresIn: expirationSeconds, jwtid: jti }
@@ -210,13 +218,6 @@ router.post('/google/verify-arc-05', async (req, res) => {
         
         user = user.toObject();
 
-        // Marcar invitación como aceptada
-        await TenantInvite.findByIdAndUpdate(
-          invite._id,
-          { status: 'accepted' },
-          { new: true }
-        );
-
         console.log(`[Cloud Service] ✓ Usuario creado desde invitación`);
       } else {
         // No está ni en users ni en tenant_invites válida
@@ -225,6 +226,13 @@ router.post('/google/verify-arc-05', async (req, res) => {
           message: 'Usuario no registrado. Requiere invitación válida.'
         });
       }
+    }
+
+    if (!user.tenantId) {
+      return res.status(403).json({
+        error: 'tenant_required',
+        message: 'Usuario sin tenant asociado. Debes registrarte con tenantKey o aceptar una invitación válida antes del enrolamiento.'
+      });
     }
 
     // Paso 3: Generar ARC 0.5 token
@@ -277,7 +285,8 @@ router.post('/google/verify-arc-05', async (req, res) => {
         sub: user._id.toString(),
         email: user.email,
         name: user.name,
-        role: user.role
+        role: user.role,
+        biometricEnrolled: Boolean(user.biometricTemplate?.biometricProfileId)
       },
       arcSessionId: arcSession._id,
       expires_in: expirationSeconds
@@ -349,11 +358,17 @@ router.post('/google/verify-access', async (req, res) => {
           updatedAt: new Date()
         });
         user = user.toObject();
-        await TenantInvite.findByIdAndUpdate(invite._id, { status: 'accepted' }, { new: true });
         console.log(`[Cloud Service] ✓ Usuario creado desde invitación (access_token flow)`);
       } else {
         return res.status(404).json({ error: 'needs_registration', message: 'Usuario no registrado. Requiere invitación válida.' });
       }
+    }
+
+    if (!user.tenantId) {
+      return res.status(403).json({
+        error: 'tenant_required',
+        message: 'Usuario sin tenant asociado. Debes registrarte con tenantKey o aceptar una invitación válida antes del enrolamiento.'
+      });
     }
 
     // Generar ARC 0.5 token
@@ -375,7 +390,7 @@ router.post('/google/verify-access', async (req, res) => {
 
     console.log(`[Cloud Service] ✓ ARC 0.5 token (access_token flow) generado para ${user.email}`);
 
-    res.status(200).json({ success: true, access_token: arcToken, token_type: 'Bearer', arc: '0.5', amr: ['federated'], user: { sub: user._id.toString(), email: user.email, name: user.name, role: user.role }, arcSessionId: arcSession._id, expires_in: expirationSeconds });
+    res.status(200).json({ success: true, access_token: arcToken, token_type: 'Bearer', arc: '0.5', amr: ['federated'], user: { sub: user._id.toString(), email: user.email, name: user.name, role: user.role, biometricEnrolled: Boolean(user.biometricTemplate?.biometricProfileId) }, arcSessionId: arcSession._id, expires_in: expirationSeconds });
 
   } catch (err) {
     console.error('[Cloud Service] Error en google/verify-access:', err?.response?.data || err.message || err);
@@ -492,13 +507,6 @@ router.post('/google/exchange', async (req, res) => {
         
         user = user.toObject();
 
-        // Marcar invitación como aceptada
-        await TenantInvite.findByIdAndUpdate(
-          invite._id,
-          { status: 'accepted' },
-          { new: true }
-        );
-
         console.log(`[Cloud Service] ✓ Usuario creado desde invitación`);
       } else {
         // No está ni en users ni en tenant_invites válida
@@ -558,7 +566,8 @@ router.post('/google/exchange', async (req, res) => {
         sub: user._id.toString(),
         email: user.email,
         name: user.name,
-        role: user.role
+        role: user.role,
+        biometricEnrolled: Boolean(user.biometricTemplate?.biometricProfileId)
       },
       arcSessionId: arcSession._id,
       expires_in: expirationSeconds
@@ -585,13 +594,21 @@ router.post('/google/exchange', async (req, res) => {
 router.post('/enroll', async (req, res) => {
   try {
     const token = getBearerToken(req);
-    const signatures = req.body?.signatures;
+    const biometricPayload = req.body?.master_feature || req.body?.biometric_template || req.body?.signatures;
+    const samplesUsed = Array.isArray(req.body?.signatures) ? req.body.signatures.length : (req.body?.samplesUsed || 5);
 
     if (!token) {
       return res.status(401).json({ error: 'Token requerido' });
     }
 
-    if (!Array.isArray(signatures) || signatures.length !== 5) {
+    if (!biometricPayload) {
+      return res.status(400).json({
+        error: 'missing_biometric_payload',
+        message: 'Se requiere master_feature, biometric_template o signatures'
+      });
+    }
+
+    if (Array.isArray(req.body?.signatures) && req.body.signatures.length !== 5) {
       return res.status(400).json({
         error: 'invalid_signatures',
         message: 'Se requieren exactamente 5 firmas para el enrolamiento'
@@ -607,8 +624,16 @@ router.post('/enroll', async (req, res) => {
     }
 
     const arcLevel = decoded?.arc?.acr || decoded?.arc?.level || decoded?.arc;
-    if (arcLevel !== 'urn:arc:level:0.5' && arcLevel !== '0.5') {
-      return res.status(403).json({ error: 'insufficient_arc', message: 'Se requiere ARC 0.5 para registrar biometría' });
+    const allowedArcLevels = new Set([
+      'urn:arc:level:0',
+      '0',
+      '0.0',
+      'urn:arc:level:0.5',
+      '0.5'
+    ]);
+
+    if (!allowedArcLevels.has(String(arcLevel))) {
+      return res.status(403).json({ error: 'insufficient_arc', message: 'Se requiere un token pre-enrolamiento válido para registrar biometría' });
     }
 
     const user = await User.findById(decoded.sub);
@@ -616,25 +641,27 @@ router.post('/enroll', async (req, res) => {
       return res.status(404).json({ error: 'user_not_found', message: 'No se encontró el usuario autenticado' });
     }
 
-    const cloudResponse = await fetchMasterFeature(signatures);
-    const { master_feature } = cloudResponse;
+    const tenantObjectId = user.tenantId
+      ? new mongoose.Types.ObjectId(user.tenantId)
+      : (decoded.tenantId && mongoose.Types.ObjectId.isValid(decoded.tenantId)
+          ? new mongoose.Types.ObjectId(decoded.tenantId)
+          : null);
 
-    if (!master_feature) {
-      return res.status(502).json({ error: 'missing_master_feature', message: 'Cloud normalization did not return master_feature' });
+    if (!tenantObjectId) {
+      return res.status(403).json({ error: 'tenant_required', message: 'No se pudo resolver el tenant asociado al usuario' });
     }
 
-    const { encryptedData, iv, authTag } = encryptBiometric(master_feature);
-    const tenantId = user.tenantId ? user.tenantId.toString() : decoded.tenantId || null;
+    const { encryptedData, iv, authTag } = encryptBiometric(biometricPayload);
 
     const profile = await BiometricProfile.findOneAndUpdate(
       { userId: user._id.toString() },
       {
         userId: user._id.toString(),
-        tenantId,
+        tenantId: tenantObjectId,
         authTag,
         iv,
         masterFeatureEncrypted: encryptedData,
-        samplesUsed: signatures.length,
+        samplesUsed,
         modelVersion: 'lstm_v1'
       },
       { upsert: true, new: true }
@@ -649,6 +676,24 @@ router.post('/enroll', async (req, res) => {
     user.updatedAt = new Date();
     await user.save();
 
+    const TenantInvite = require('../models/tenantInvite');
+    const acceptedInvite = await TenantInvite.findOneAndUpdate(
+      {
+        email: user.email,
+        tenantId: user.tenantId,
+        status: 'pending'
+      },
+      { status: 'accepted' },
+      {
+        new: true,
+        sort: { createdAt: -1 }
+      }
+    );
+
+    if (acceptedInvite) {
+      console.log(`[Cloud Service] ✓ Invitación marcada como accepted para ${user.email}`);
+    }
+
     const privateKey = fs.readFileSync(process.env.JWT_PRIVATE_KEY_PATH, 'utf8');
     const expirationSeconds = parseInt(process.env.JWT_EXPIRATION_SECONDS || '3600', 10);
     const jti = crypto.randomUUID();
@@ -658,7 +703,7 @@ router.post('/enroll', async (req, res) => {
         email: user.email,
         name: user.name,
         role: user.role,
-        tenantId: tenantId,
+        tenantId: tenantObjectId.toString(),
         biometricProfileId: profile._id.toString(),
         arc: {
           acr: 'urn:arc:level:1.0',

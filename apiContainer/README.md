@@ -87,6 +87,51 @@ Flutter/Node → apiContainer (9001) → cloud_service (8000)
 }
 ```
 
+#### `POST /enroll`
+**Propósito:** Recibir 5 firmas crudas para enrolamiento biométrico con DTW medoid
+
+**Request:**
+```json
+{
+  "signatures": [
+    {
+      "timestamp": "2025-11-15T10:30:00Z",
+      "stroke_points": [
+        {"x": 266.0, "y": 168.0, "t": 0, "p": 0.5},
+        {"x": 267.0, "y": 162.0, "t": 68, "p": 0.5}
+      ],
+      "stroke_duration_ms": 2808
+    }
+  ],
+  "representation_strategy": "dtw_medoid"
+}
+```
+
+**Validaciones:**
+- Exactamente 5 firmas
+- Cada firma debe tener entre 100 y 1200 puntos
+- Estructura fija del JSON: `timestamp`, `stroke_points`, `stroke_duration_ms`
+- No se calculan features extra ni suavizado en el SDK para el enrolamiento
+
+**Procesamiento:**
+1. Valida tamaño y estructura de cada firma
+2. Conserva las coordenadas originales
+3. Envía las 5 firmas crudas al cloud service
+4. El cloud service selecciona el DTW medoid del conjunto
+
+**Response:**
+```json
+{
+  "status": "success",
+  "message": "Biometric enrollment template calculated successfully",
+  "master_feature": {
+    "dtw_medoid_index": 2,
+    "dtw_medoid": [...],
+    "dtw_pairwise_distances": [...]
+  }
+}
+```
+
 ---
 
 ### **cloud_service (Puerto 8000)**

@@ -95,33 +95,36 @@ async def normalize_biometric(request: NormalizationRequest) -> NormalizationRes
 async def enroll_biometric_master(request: EnrollmentRequest) -> EnrollmentResponse:
     """
     Endpoint intermedio para registro.
-    Toma 5 firmas desde Node.js, las normaliza en memoria y solicita 
-    el tensor final numérico al cloud_service.
+    Toma 5 firmas crudas desde Node.js, valida estructura y tamaño,
+    y solicita al cloud_service el template de enrolamiento basado en DTW medoid.
     """
     logger.info(f"Recibiendo solicitud de enrolamiento con {len(request.signatures)} firmas")
     
-    # Normalizar cada firma individualmente (padding y corrección de ejes)
-    normalized_payloads = []
+    raw_signatures = []
     
     try:
         for i, sig in enumerate(request.signatures):
-             norm_points, features = normalize_stroke(sig)
-             
-             normalized_payloads.append({
-                 "normalized_stroke": [{"x": p.x, "y": p.y, "t": p.t, "p": p.p} for p in norm_points],
-                 "real_length": features.get("real_length"),
-                 "features": features
-             })
-             
-        logger.info(f"✓ 5 Firmas normalizadas (Padding y Padding Features aplicados)")
+            if len(sig.stroke_points) < 100:
+                raise ValueError(f"Firma #{i+1} demasiado corta: {len(sig.stroke_points)} puntos")
+            if len(sig.stroke_points) > 1200:
+                raise ValueError(f"Firma #{i+1} demasiado larga: {len(sig.stroke_points)} puntos")
+
+            raw_signatures.append({
+                "timestamp": sig.timestamp,
+                "stroke_points": [{"x": p.x, "y": p.y, "t": p.t, "p": p.p} for p in sig.stroke_points],
+                "stroke_duration_ms": sig.stroke_duration_ms,
+                "real_length": len(sig.stroke_points)
+            })
+
+        logger.info("✓ 5 firmas validadas y preparadas en formato crudo para enrolamiento")
         
         # Enviar a cloud_service/api/biometric/enroll
-        cloud_response = send_enrollment_to_ml_service(normalized_payloads)
+        cloud_response = send_enrollment_to_ml_service(raw_signatures, request.representation_strategy)
         
-        # `master_feature` viene como {"mean": [...], "std": [...]}
+        # La respuesta contiene el template de enrolamiento (DTW medoid)
         return EnrollmentResponse(
             status="success",
-            message="Biometric enrollment tensor calculated successfully",
+            message="Biometric enrollment template calculated successfully",
             master_feature=cloud_response.get("master_feature", {})
         )
 

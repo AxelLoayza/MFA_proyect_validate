@@ -41,6 +41,8 @@ dependencies:
   
   # HTTP client para comunicación con microservicio
   http: ^1.2.0
+
+  shared_preferences: ^2.2.3
   
   # Para manejo de JSON
   json_annotation: ^4.8.1

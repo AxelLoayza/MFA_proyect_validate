@@ -2,7 +2,7 @@ const mongoose = require('mongoose');
 
 const BiometricProfileSchema = new mongoose.Schema({
   userId: { type: String, required: true, unique: true, index: true },
-  tenantId: { type: String, default: null, index: true },
+  tenantId: { type: mongoose.Schema.Types.ObjectId, ref: 'Tenant', required: true, index: true },
   authTag: { type: String, required: true },
   iv: { type: String, required: true },
   masterFeatureEncrypted: { type: String, required: true },
@@ -10,7 +10,8 @@ const BiometricProfileSchema = new mongoose.Schema({
   modelVersion: { type: String, default: 'lstm_v1' }
 }, {
   collection: 'biometricprofile',
-  timestamps: true
+  timestamps: true,
+  versionKey: false
 });
 
 module.exports = mongoose.model('BiometricProfile', BiometricProfileSchema);

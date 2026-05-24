@@ -275,29 +275,37 @@ CLOUD_PROVIDER_VERIFY_SSL=false
 
 ## Testing
 
-### Test básico con curl
+Servicio en la nube para validación y enrolamiento de firmas biométricas usando LSTM y DTW medoid. Recibe datos normalizados desde `apiContainer` para login, y firmas crudas para enrolamiento.
 
 ```bash
 # Health check
 curl http://localhost:8000/health
 
 # Validación con autenticación
+✅ **Login**: Resampling, suavizado, features avanzadas, normalización y máscara
+✅ **Enrolamiento**: DTW medoid sobre firmas crudas, sin suavizado ni features extra
 curl -X POST http://localhost:8000/api/biometric/validate \
   -H "Authorization: Basic Ym1mYV91c2VyOnlvdXJfc2VjdXJlX3Bhc3N3b3JkX2hlcmU=" \
   -H "Content-Type: application/json" \
   -d @test_payload.json
 ```
 
-### Test con Python
+1. El backend del cliente recopila varias firmas de registro.
+2. `apiContainer` valida tamaño y estructura fija, y envía las firmas crudas.
+3. El cloud service selecciona el DTW medoid como template representativo.
+4. No se suavizan coordenadas ni se extraen features extra en esta fase.
 
-```python
-import requests
-import base64
-
-# Credenciales
+El servicio privado aplica preprocesamiento biométrico adicional para login:
 username = "bmfa_user"
 password = "your_secure_password_here"
 credentials = f"{username}:{password}"
+
+Para enrolamiento:
+
+- Valida tamaño y estructura del JSON.
+- Conserva la firma original.
+- Calcula DTW medoid sobre las trayectorias crudas.
+- No usa suavizado, features avanzadas ni máscara como parte del template.
 encoded = base64.b64encode(credentials.encode()).decode()
 
 # Request
