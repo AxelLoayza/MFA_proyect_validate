@@ -34,7 +34,7 @@ def send_enrollment_to_ml_service(normalized_payloads: List[Dict[str, Any]]) -> 
         )
         
         response = requests.post(
-            f"{settings.CLOUD_PROVIDER_ENDPOINT}/api/biometric/enroll",
+            f"{settings.CLOUD_PROVIDER_ENDPOINT}/enroll",
             json=payload,
             headers={
                 "Authorization": auth_header,
@@ -81,7 +81,7 @@ def send_to_ml_service(normalized_points: List[StrokePoint], features: Dict[str,
         
 
         response = requests.post(
-            settings.CLOUD_PROVIDER_ENDPOINT,
+            f"{settings.CLOUD_PROVIDER_ENDPOINT}/validate",
             json=payload,
             headers={
                 "Authorization": auth_header,

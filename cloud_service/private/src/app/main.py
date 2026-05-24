@@ -109,7 +109,7 @@ async def limit_request_size(request: Request, call_next):
     """
     Middleware to limit request body size
     """
-    max_size = int(os.getenv("MAX_REQUEST_SIZE", "102400"))  # 100 KB default
+    max_size = settings.max_request_size
     
     # Check Content-Length header
     content_length = request.headers.get("content-length")

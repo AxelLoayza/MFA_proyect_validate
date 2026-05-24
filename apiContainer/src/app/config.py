@@ -32,7 +32,7 @@ class Settings:
     # ========== CLOUD ML SERVICE (TLS/HTTPS) ==========
     CLOUD_PROVIDER_ENDPOINT: str = os.getenv(
         "CLOUD_PROVIDER_ENDPOINT",
-        "https://your-ml-service.example.com/api/biometric/validate"
+        "http://localhost:8000/api/biometric"
     )
     CLOUD_PROVIDER_USERNAME: str = os.getenv("CLOUD_PROVIDER_USERNAME", "bmfa_user")
     CLOUD_PROVIDER_PASSWORD: str = os.getenv("CLOUD_PROVIDER_PASSWORD", "your_secure_password_here")

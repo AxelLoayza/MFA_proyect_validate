@@ -87,7 +87,7 @@ class _EnrollmentScreenState extends State<EnrollmentScreen> {
       };
 
       final response = await http.post(
-        Uri.parse('$backendUrl/auth/enroll'),
+        Uri.parse('$backendUrl/api/auth/enroll'),
         headers: {
           'Content-Type': 'application/json',
           'Authorization': 'Bearer ${widget.jwtToken}',
@@ -96,9 +96,9 @@ class _EnrollmentScreenState extends State<EnrollmentScreen> {
       );
 
       if (response.statusCode == 201 || response.statusCode == 200) {
-        // ÉXITO
+        final responseJson = jsonDecode(response.body) as Map<String, dynamic>;
         if (!mounted) return;
-        _showSuccessDialog();
+        _showSuccessDialog(responseJson['access_token']?.toString());
       } else {
         // ERROR DEL SERVIDOR
         final errorBody = jsonDecode(response.body);
@@ -130,7 +130,7 @@ class _EnrollmentScreenState extends State<EnrollmentScreen> {
     }
   }
 
-  void _showSuccessDialog() {
+  void _showSuccessDialog(String? accessToken) {
     showDialog(
       context: context,
       barrierDismissible: false,
@@ -145,7 +145,7 @@ class _EnrollmentScreenState extends State<EnrollmentScreen> {
             onPressed: () {
               // Cerrar diálogo y regresar al Login
               Navigator.of(context).pop();
-              Navigator.of(context).pop(); // Salir de EnrollmentScreen
+              Navigator.of(context).pop(accessToken); // Salir de EnrollmentScreen con ARC 1.0 si existe
             },
             child: const Text('Finalizar'),
           ),

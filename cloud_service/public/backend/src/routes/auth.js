@@ -9,6 +9,62 @@ const crypto = require('crypto');
 const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 const User = require('../models/user');
 const ArcSession = require('../models/arcSession');
+const BiometricProfile = require('../models/biometricProfile');
+const { encryptBiometric } = require('../utils/crypto');
+
+const PRIVATE_BIOMETRIC_URL = process.env.SDK_URL || 'http://localhost:8000';
+
+function getBearerToken(req) {
+  const authHeader = req.headers.authorization || '';
+  if (!authHeader.startsWith('Bearer ')) return null;
+  return authHeader.split(' ')[1];
+}
+
+function verifyArc05Token(token) {
+  const algorithm = process.env.JWT_ALGO || 'RS256';
+  const publicKeyPath = process.env.JWT_PUBLIC_KEY_PATH || process.env.JWT_PRIVATE_KEY_PATH;
+  const publicKey = fs.readFileSync(publicKeyPath, 'utf8');
+
+  try {
+    return jwt.verify(token, publicKey, { algorithms: [algorithm] });
+  } catch (firstError) {
+    if (!process.env.JWT_PRIVATE_KEY_PATH || publicKeyPath === process.env.JWT_PRIVATE_KEY_PATH) {
+      throw firstError;
+    }
+
+    const privateKey = fs.readFileSync(process.env.JWT_PRIVATE_KEY_PATH, 'utf8');
+    const derivedPublicKey = crypto.createPublicKey(privateKey).export({ type: 'spki', format: 'pem' });
+    return jwt.verify(token, derivedPublicKey, { algorithms: [algorithm] });
+  }
+}
+
+async function fetchMasterFeature(signatures) {
+  const response = await fetch(`${PRIVATE_BIOMETRIC_URL}/enroll`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ signatures })
+  });
+
+  const responseText = await response.text();
+  let payload = {};
+
+  try {
+    payload = responseText ? JSON.parse(responseText) : {};
+  } catch (_) {
+    payload = { error: responseText };
+  }
+
+  if (!response.ok) {
+    const error = new Error(payload.detail || payload.message || 'Enrollment normalization failed');
+    error.statusCode = response.status;
+    error.details = payload;
+    throw error;
+  }
+
+  return payload;
+}
 
 async function verifyIdToken(idToken) {
   const allowed = process.env.GOOGLE_ALLOWED_CLIENT_IDS
@@ -523,6 +579,147 @@ router.post('/google/exchange', async (req, res) => {
       error: 'exchange_failed',
       message: err.message || 'Code exchange failed'
     });
+  }
+});
+
+router.post('/enroll', async (req, res) => {
+  try {
+    const token = getBearerToken(req);
+    const signatures = req.body?.signatures;
+
+    if (!token) {
+      return res.status(401).json({ error: 'Token requerido' });
+    }
+
+    if (!Array.isArray(signatures) || signatures.length !== 5) {
+      return res.status(400).json({
+        error: 'invalid_signatures',
+        message: 'Se requieren exactamente 5 firmas para el enrolamiento'
+      });
+    }
+
+    let decoded;
+    try {
+      decoded = verifyArc05Token(token);
+    } catch (err) {
+      console.error('[Cloud Service] ARC 0.5 verification failed:', err.message);
+      return res.status(401).json({ error: 'Token inválido', details: err.message });
+    }
+
+    const arcLevel = decoded?.arc?.acr || decoded?.arc?.level || decoded?.arc;
+    if (arcLevel !== 'urn:arc:level:0.5' && arcLevel !== '0.5') {
+      return res.status(403).json({ error: 'insufficient_arc', message: 'Se requiere ARC 0.5 para registrar biometría' });
+    }
+
+    const user = await User.findById(decoded.sub);
+    if (!user) {
+      return res.status(404).json({ error: 'user_not_found', message: 'No se encontró el usuario autenticado' });
+    }
+
+    const cloudResponse = await fetchMasterFeature(signatures);
+    const { master_feature } = cloudResponse;
+
+    if (!master_feature) {
+      return res.status(502).json({ error: 'missing_master_feature', message: 'Cloud normalization did not return master_feature' });
+    }
+
+    const { encryptedData, iv, authTag } = encryptBiometric(master_feature);
+    const tenantId = user.tenantId ? user.tenantId.toString() : decoded.tenantId || null;
+
+    const profile = await BiometricProfile.findOneAndUpdate(
+      { userId: user._id.toString() },
+      {
+        userId: user._id.toString(),
+        tenantId,
+        authTag,
+        iv,
+        masterFeatureEncrypted: encryptedData,
+        samplesUsed: signatures.length,
+        modelVersion: 'lstm_v1'
+      },
+      { upsert: true, new: true }
+    );
+
+    user.biometricTemplate = {
+      biometricProfileId: profile._id.toString(),
+      modelVersion: profile.modelVersion,
+      samplesUsed: profile.samplesUsed,
+      enrolledAt: profile.updatedAt
+    };
+    user.updatedAt = new Date();
+    await user.save();
+
+    const privateKey = fs.readFileSync(process.env.JWT_PRIVATE_KEY_PATH, 'utf8');
+    const expirationSeconds = parseInt(process.env.JWT_EXPIRATION_SECONDS || '3600', 10);
+    const jti = crypto.randomUUID();
+    const finalToken = jwt.sign(
+      {
+        sub: user._id.toString(),
+        email: user.email,
+        name: user.name,
+        role: user.role,
+        tenantId: tenantId,
+        biometricProfileId: profile._id.toString(),
+        arc: {
+          acr: 'urn:arc:level:1.0',
+          amr: ['federated', 'biometric']
+        }
+      },
+      privateKey,
+      {
+        algorithm: 'RS256',
+        expiresIn: expirationSeconds,
+        jwtid: jti
+      }
+    );
+
+    const arcSession = new ArcSession({
+      jti,
+      userId: user._id,
+      clientId: process.env.GOOGLE_CLIENT_ID,
+      acr: 'urn:arc:level:1.0',
+      amr: ['federated', 'biometric'],
+      expiresAt: new Date(Date.now() + expirationSeconds * 1000)
+    });
+    await arcSession.save();
+
+    return res.status(201).json({
+      success: true,
+      message: 'Biometric profile stored successfully',
+      access_token: finalToken,
+      token_type: 'Bearer',
+      arc: '1.0',
+      amr: ['federated', 'biometric'],
+      arcSessionId: arcSession._id,
+      expires_in: expirationSeconds,
+      biometricProfile: {
+        id: profile._id.toString(),
+        userId: profile.userId,
+        tenantId: profile.tenantId,
+        samplesUsed: profile.samplesUsed,
+        modelVersion: profile.modelVersion,
+        createdAt: profile.createdAt,
+        updatedAt: profile.updatedAt
+      },
+      user: {
+        _id: user._id.toString(),
+        googleId: user.googleId,
+        email: user.email,
+        name: user.name,
+        role: user.role,
+        biometricTemplate: user.biometricTemplate,
+        tenantId: user.tenantId ? user.tenantId.toString() : null
+      }
+    });
+  } catch (err) {
+    console.error('[Cloud Service] Error en /auth/enroll:', err);
+    if (err.statusCode) {
+      return res.status(err.statusCode).json({
+        error: err.message,
+        details: err.details || undefined
+      });
+    }
+    return res.status(500).json({ error: 'enrollment_failed', message: err.message });
   }
 });
 

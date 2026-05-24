@@ -2,9 +2,8 @@ const axios = require('axios');
 const BiometricProfile = require('../models/biometric.mongo.model');
 const { encryptBiometric } = require('../utils/crypto.util');
 
-// URL del microservicio de Python (FastAPI) donde se procesa la biometría
-// Mapea al puerto 8000 por defecto que hemos venido manejando
-const PYTHON_SERVICE_URL = process.env.CLOUD_SERVICE_URL || 'http://localhost:8000';
+// URL del SDK/ApiContainer donde se normalizan las firmas antes de persistirlas
+const SDK_URL = process.env.SDK_URL || process.env.API_CONTAINER_URL || 'http://localhost:8000';
 
 /**
  * Función central del Orquestador.
@@ -28,9 +27,8 @@ async function enrollUserBiometrics(userId, signatures) {
         const ML_PASSWORD = process.env.ML_SERVICE_PASSWORD || 'your_secure_password_here';
         const token = Buffer.from(`${ML_USERNAME}:${ML_PASSWORD}`, 'utf8').toString('base64');
 
-        // 1. Enviar las firmas a FastAPI (Python) para generar el Feature Maestro
-        // Nota: La estructura del payload debe coincidir con lo que espera EnrollmentCloudRequest en Python
-        const response = await axios.post(`${PYTHON_SERVICE_URL}/api/biometric/enroll`, {
+        // 1. Enviar las firmas al SDK (ApiContainer) para generar el Feature Maestro
+        const response = await axios.post(`${SDK_URL}/enroll`, {
             signatures: signatures 
         }, {
             headers: {

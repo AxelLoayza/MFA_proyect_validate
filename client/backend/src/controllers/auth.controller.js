@@ -257,12 +257,46 @@ async function googleExchange(req, res, next) {
   }
 }
 
-// Stub for biometric enrollment - placeholder implementation
 async function enrollBiometric(req, res, next) {
   try {
-    // Expecting body with enrollment data; for now return 501 Not Implemented
-    res.status(501).json({ error: 'enrollBiometric not implemented on server' });
+    const authorization = req.headers.authorization;
+    const signatures = req.body?.signatures;
+
+    if (!authorization || !authorization.startsWith('Bearer ')) {
+      return res.status(401).json({ error: 'Token requerido' });
+    }
+
+    if (!Array.isArray(signatures) || signatures.length !== 5) {
+      return res.status(400).json({
+        error: 'invalid_signatures',
+        message: 'Se requieren exactamente 5 firmas para el enrolamiento'
+      });
+    }
+
+    const cloudPublicBackendUrl = process.env.CLOUD_PUBLIC_BACKEND_URL || 'http://localhost:4003';
+
+    logger.info('[Auth Controller] Delegando enrolamiento biométrico a Cloud Service público');
+
+    const response = await axios.post(
+      `${cloudPublicBackendUrl}/auth/enroll`,
+      { signatures },
+      {
+        headers: {
+          Authorization: authorization,
+          'Content-Type': 'application/json'
+        },
+        timeout: 30000
+      }
+    );
+
+    return res.status(response.status).json(response.data);
   } catch (err) {
+    logger.error(`[Auth Controller] Error en enrollBiometric: ${err.message}`);
+
+    if (err.response?.data) {
+      return res.status(err.response.status || 500).json(err.response.data);
+    }
+
     next(err);
   }
 }

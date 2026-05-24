@@ -5,6 +5,7 @@ const UserSchema = new mongoose.Schema({
   email: { type: String, index: true },
   name: { type: String },
   role: { type: String, default: 'user', index: true },
+  tenantId: { type: mongoose.Schema.Types.ObjectId, ref: 'Tenant', default: null, index: true },
   biometricTemplate: { type: mongoose.Schema.Types.Mixed, default: null },
   createdAt: { type: Date, default: Date.now },
   updatedAt: { type: Date, default: Date.now }

@@ -233,11 +233,21 @@ class _LoginScreenState extends State<LoginScreen> {
   Future<void> _continueToEnrollment() async {
     if (_accessToken == null) return;
 
-    await Navigator.of(context).push(
+    final enrollmentResult = await Navigator.of(context).push<String>(
       MaterialPageRoute(
         builder: (_) => EnrollmentScreen(jwtToken: _accessToken!),
       ),
     );
+
+    if (enrollmentResult != null && enrollmentResult.isNotEmpty) {
+      setState(() {
+        _accessToken = enrollmentResult;
+        _arc = '1.0';
+        _statusMessage = 'Enrolamiento completado. ARC 1.0 activo.';
+      });
+      if (!mounted) return;
+      _showMessage('✓ Enrolamiento completado. ARC 1.0 emitido por Cloud Service.');
+    }
   }
 
   Future<void> _resetSession() async {
