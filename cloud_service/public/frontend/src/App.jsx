@@ -1,7 +1,10 @@
 import React, { useState, useEffect } from 'react'
+import { createPortal } from 'react-dom'
 import AuthCard from './components/AuthCard'
 import AdminPanel from './components/AdminPanel'
 import { getMe } from './sdk'
+import { ToastContainer } from 'react-toastify'
+import 'react-toastify/dist/ReactToastify.css'
 
 export default function App() {
   const [user, setUser] = useState(null)
@@ -91,6 +94,21 @@ export default function App() {
           <div className="auth-landing__notice auth-landing__notice--sticky">{registrationHint}</div>
         ) : null}
       </main>
+
+      {typeof document !== 'undefined' ? createPortal(
+        <ToastContainer
+          position="top-right"
+          autoClose={2600}
+          hideProgressBar={false}
+          newestOnTop
+          closeOnClick
+          pauseOnHover
+          draggable
+          theme="dark"
+          style={{ zIndex: 2147483648, position: 'fixed' }}
+        />,
+        document.body
+      ) : null}
     </div>
   )
 }

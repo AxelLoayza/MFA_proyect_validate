@@ -28,7 +28,7 @@ export default function UserManagementView() {
             <option>tenant_beta</option>
           </select>
           <div style={{ marginLeft: 'auto' }}>
-            <button className="shadcn-btn primary" onClick={() => { setModalOpen(true) }}>Generar invitación</button>
+            <button type="button" className="shadcn-btn primary" onClick={() => { setModalOpen(true) }}>Generar invitación</button>
           </div>
         </div>
       </div>

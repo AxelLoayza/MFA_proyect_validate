@@ -2,20 +2,21 @@ import React, { useState } from 'react'
 import ProfileView from './views/ProfileView'
 import OrganizationsView from './views/OrganizationsView'
 import UserManagementView from './views/UserManagementView'
+import '../styles/components/AdminPanel.css'
 
 export default function AdminPanel({ user, onLogout }) {
   const [active, setActive] = useState('profile')
 
   return (
-    <div className="shadcn-card admin-panel">
-      <div className="dashboard-card__header">
-        <div>
-          <p className="dashboard-card__eyebrow">Dashboard</p>
-          <h1 className="dashboard-card__title">Bienvenido, {user.name}</h1>
+    <div className="admin-panel">
+      <div className="admin-panel__header">
+        <div className="admin-panel__header-copy">
+          <p className="admin-panel__eyebrow">Dashboard de administración</p>
+          <h1 className="admin-panel__title">Bienvenido, {user.name}</h1>
+          <p className="admin-panel__subtitle">Desde este panel puedes revisar el estado de tu cuenta, navegar entre módulos y gestionar usuarios con una vista más amplia y ordenada.</p>
         </div>
-        <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-          <button className="shadcn-btn ghost" onClick={onLogout}>Cerrar sesión</button>
-          <span className="status-pill status-pill--success">{user.role}</span>
+        <div className="admin-panel__status">
+          <span className="admin-panel__status-pill">{user.role}</span>
         </div>
       </div>
 

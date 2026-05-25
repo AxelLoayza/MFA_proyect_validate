@@ -1,6 +1,9 @@
-import React, { useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { GoogleLogin } from '@react-oauth/google'
+import { toast } from 'react-toastify'
 import { loginWithGoogle, registerWithGoogle } from '../sdk'
+import '../styles/components/AuthCard.css'
 
 const termsText = `
 Esta aplicación utiliza ARC 0.5 y gestión de ARC 1 para validar el acceso, registrar sesiones y proteger el uso autorizado del servicio.
@@ -24,6 +27,17 @@ export default function AuthCard({ onLogin, onNeedsRegistration }) {
   const [domain, setDomain] = useState('')
 
   const canProceedRegister = useMemo(() => termsAccepted, [termsAccepted])
+
+  useEffect(() => {
+    if (!registerModalOpen || typeof document === 'undefined') return undefined
+
+    const previousOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+
+    return () => {
+      document.body.style.overflow = previousOverflow
+    }
+  }, [registerModalOpen])
 
   const handleAuth = async (credentialResponse, action) => {
     const id_token = credentialResponse?.credential
@@ -77,63 +91,94 @@ export default function AuthCard({ onLogin, onNeedsRegistration }) {
   }
 
   return (
-    <div className="auth-landing">
-      <section className="auth-landing__hero">
-        <p className="hero-card__eyebrow">ARC secure access</p>
-        <h1 className="hero-card__title">Accede o regístrate con Google</h1>
-        <p className="hero-card__text">
-          El flujo separa inicio de sesión y registro. Si tu correo no existe en MongoDB, el backend te pedirá registrarte.
-        </p>
-      </section>
-
-      <section className="auth-landing__actions">
-        <div className="action-card shadcn-card">
-          <h2 className="action-card__title">Iniciar sesión</h2>
-          <p className="action-card__text">Usa tu cuenta ya registrada para entrar al dashboard.</p>
-          <div className="action-card__button">
-            <GoogleLogin
-              onSuccess={(response) => handleAuth(response, 'login')}
-              onError={() => setErrorMessage('Google Sign-In error')}
-              theme="outline"
-              size="large"
-              shape="pill"
-              text={busy ? 'signin_with' : 'signin_with'}
-            />
+    <div className="auth-card">
+      <div className="auth-card__split">
+        <section className="auth-card__visual" aria-hidden="true">
+          <div className="auth-card__visual-overlay" />
+          <div className="auth-card__visual-badge">
+            <span className="auth-card__visual-icon">◈</span>
+            <span>Acceso a panel de administrador</span>
           </div>
-        </div>
+          <div className="auth-card__visual-copy">
+            <p className="auth-card__visual-eyebrow">sistema de gestión</p>
+            <h2 className="auth-card__visual-title">Gestión segura, clara y centralizada.</h2>
+            <p className="auth-card__visual-text">Una experiencia de acceso pensada para iniciar sesión o registrarte con una lectura más limpia y profesional.</p>
+          </div>
+        </section>
 
-        <div className="action-card action-card--highlight shadcn-card">
-          <h2 className="action-card__title">Registrarse</h2>
-          <p className="action-card__text">Antes de continuar debes aceptar términos y condiciones.</p>
-          <button className="shadcn-btn primary" onClick={() => setRegisterModalOpen(true)} type="button">
-            Abrir términos y registro
-          </button>
-        </div>
-      </section>
+        <section className="auth-card__content">
+          <div className="auth-card__hero">
+            <p className="auth-card__eyebrow">ARC secure access</p>
+            <h1 className="auth-card__title">Accede o regístrate con Google</h1>
+            <p className="auth-card__text">
+              El flujo separa inicio de sesión y registro. Si tu correo no existe en MongoDB, el backend te pedirá registrarte.
+            </p>
+          </div>
 
-      {notice ? <p className="auth-landing__notice">{notice}</p> : null}
-      {errorMessage ? <p className="auth-landing__error">{errorMessage}</p> : null}
-
-      {registerModalOpen ? (
-        <div className="modal-overlay" role="dialog" aria-modal="true" aria-label="Términos de registro">
-          <div className="modal-card shadcn-card">
-            <div className="modal-card__header">
-              <h3>Acuerdo de uso y condiciones</h3>
-              <button type="button" className="shadcn-btn ghost modal-card__close" onClick={() => setRegisterModalOpen(false)}>
-                ×
-              </button>
-            </div>
-            <div className="modal-card__body">
-              <p className="modal-card__text">{termsText}</p>
-              <div className="modal-card__fields">
-                <label className="modal-card__label">Nombre de la empresa</label>
-                <input className="shadcn-input" value={companyName} onChange={(e) => setCompanyName(e.target.value)} />
-                <label className="modal-card__label">Dominio (opcional)</label>
-                <input className="shadcn-input" value={domain} onChange={(e) => setDomain(e.target.value)} />
-                <label className="modal-card__label">Tenant Key (clave única)</label>
-                <input className="shadcn-input" value={tenantKey} onChange={(e) => setTenantKey(e.target.value)} placeholder="tenant_alfa" />
+          <section className="auth-card__actions">
+            <div className="auth-card__action shadcn-card">
+              <h2 className="auth-card__action-title">Iniciar sesión</h2>
+              <p className="auth-card__action-text">Usa tu cuenta ya registrada para entrar al dashboard.</p>
+              <div className="auth-card__action-center">
+                <GoogleLogin
+                  onSuccess={(response) => handleAuth(response, 'login')}
+                  onError={() => setErrorMessage('Google Sign-In error')}
+                  theme="outline"
+                  size="large"
+                  shape="pill"
+                  text={busy ? 'signin_with' : 'signin_with'}
+                />
               </div>
-              <label className="modal-card__checkbox">
+            </div>
+
+            <div className="auth-card__action auth-card__action--highlight shadcn-card">
+              <h2 className="auth-card__action-title">Registrarse</h2>
+              <p className="auth-card__action-text">Antes de continuar debes aceptar términos y condiciones.</p>
+              <div className="auth-card__action-center">
+                <button className="shadcn-btn primary auth-card__action-button" onClick={() => setRegisterModalOpen(true)} type="button">
+                  Abrir términos y registro
+                </button>
+              </div>
+            </div>
+          </section>
+        </section>
+      </div>
+
+      {notice ? <p className="auth-card__notice">{notice}</p> : null}
+      {errorMessage ? <p className="auth-card__error">{errorMessage}</p> : null}
+
+      {registerModalOpen && typeof document !== 'undefined' ? createPortal(
+        <div className="invite-modal-overlay" role="dialog" aria-modal="true" aria-label="Términos de registro" onMouseDown={() => setRegisterModalOpen(false)}>
+          <div className="modal-card shadcn-card auth-register-modal" onMouseDown={(event) => event.stopPropagation()}>
+            <div className="auth-register-modal__hero">
+              <div className="auth-register-modal__badge">Registro seguro</div>
+              <div className="auth-register-modal__header">
+                <div>
+                  <h3 className="auth-register-modal__title">Acuerdo de uso y condiciones</h3>
+                  <p className="auth-register-modal__subtitle">Completa la información de tu organización y confirma los términos para activar el acceso.</p>
+                </div>
+                <button type="button" className="auth-register-modal__close" onClick={() => setRegisterModalOpen(false)} aria-label="Cerrar modal">
+                  ×
+                </button>
+              </div>
+            </div>
+            <div className="auth-register-modal__body">
+              <p className="auth-register-modal__lead">{termsText}</p>
+              <div className="auth-register-modal__grid">
+                <div className="auth-register-modal__field">
+                  <label className="auth-register-modal__label">Nombre de la empresa</label>
+                  <input className="auth-register-modal__input" value={companyName} onChange={(e) => setCompanyName(e.target.value)} />
+                </div>
+                <div className="auth-register-modal__field">
+                  <label className="auth-register-modal__label">Dominio (opcional)</label>
+                  <input className="auth-register-modal__input" value={domain} onChange={(e) => setDomain(e.target.value)} />
+                </div>
+                <div className="auth-register-modal__field auth-register-modal__field--wide">
+                  <label className="auth-register-modal__label">Tenant Key (clave única)</label>
+                  <input className="auth-register-modal__input" value={tenantKey} onChange={(e) => setTenantKey(e.target.value)} placeholder="tenant_alfa" />
+                </div>
+              </div>
+              <label className="auth-register-modal__checkbox">
                 <input
                   type="checkbox"
                   checked={termsAccepted}
@@ -142,8 +187,37 @@ export default function AuthCard({ onLogin, onNeedsRegistration }) {
                 <span>He leído los términos y condiciones y estoy de acuerdo.</span>
               </label>
             </div>
-            <div className="modal-card__footer">
-              <button type="button" className="shadcn-btn ghost" onClick={() => setRegisterModalOpen(false)}>
+            <aside className="auth-register-modal__aside" aria-label="Resumen de registro">
+              <div className="auth-register-modal__aside-box">
+                <h4 className="auth-register-modal__aside-title">Antes de continuar</h4>
+                <p className="auth-register-modal__aside-copy">Usa este panel para dejar el registro más claro y profesional, con el mismo lenguaje visual del modal de invitación.</p>
+                <div className="auth-register-modal__aside-list">
+                  <div className="auth-register-modal__aside-item">
+                    <span className="auth-register-modal__aside-dot" />
+                    <div>
+                      <strong>Empresa</strong>
+                      <span>Define el contexto de tu organización.</span>
+                    </div>
+                  </div>
+                  <div className="auth-register-modal__aside-item">
+                    <span className="auth-register-modal__aside-dot" />
+                    <div>
+                      <strong>Dominio y tenant</strong>
+                      <span>Ayudan a validar y separar el acceso.</span>
+                    </div>
+                  </div>
+                  <div className="auth-register-modal__aside-item">
+                    <span className="auth-register-modal__aside-dot" />
+                    <div>
+                      <strong>Consentimiento</strong>
+                      <span>Debes aceptar los términos para activar el flujo.</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </aside>
+            <div className="auth-register-modal__footer">
+              <button type="button" className="shadcn-btn ghost auth-register-modal__secondary" onClick={() => setRegisterModalOpen(false)}>
                 Cancelar
               </button>
               <div className={canProceedRegister ? 'google-action' : 'google-action google-action--disabled'}>
@@ -151,13 +225,18 @@ export default function AuthCard({ onLogin, onNeedsRegistration }) {
                   <GoogleLogin
                     onSuccess={async (response) => {
                       // create tenant then register with tenantKey
+                      if (!tenantKey.trim() || !companyName.trim()) {
+                        toast.error('Completa el nombre de la empresa y el tenant key para continuar.')
+                        return
+                      }
+
                       setBusy(true)
                       setErrorMessage('')
                       try {
                         const sdk = await import('../sdk')
                         const ct = await sdk.createTenant({ tenantKey, companyName, domain })
                         if (!ct.ok && ct.status !== 409) {
-                          setErrorMessage(ct.message || ct.error || 'Error creando tenant')
+                          toast.error(ct.message || ct.error || 'Error creando tenant')
                           setBusy(false)
                           return
                         }
@@ -171,12 +250,13 @@ export default function AuthCard({ onLogin, onNeedsRegistration }) {
                           setTenantKey('')
                           setCompanyName('')
                           setDomain('')
+                          toast.success('Registro completado con éxito.')
                           setBusy(false)
                           return
                         }
-                        setErrorMessage(reg.message || reg.error || 'Error registrando usuario')
+                        toast.error(reg.message || reg.error || 'Error registrando usuario')
                       } catch (err) {
-                        setErrorMessage(err?.message || 'Error en registro')
+                        toast.error(err?.message || 'Error en registro')
                       } finally {
                         setBusy(false)
                       }
@@ -188,15 +268,17 @@ export default function AuthCard({ onLogin, onNeedsRegistration }) {
                     text="signup_with"
                   />
                 ) : (
-                  <button type="button" className="primary-button primary-button--disabled" disabled>
+                  <button type="button" className="primary-button primary-button--disabled auth-register-modal__primary" disabled>
                     Acepta los términos para continuar
                   </button>
                 )}
               </div>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       ) : null}
+
     </div>
   )
 }

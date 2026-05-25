@@ -126,6 +126,24 @@ a { color: inherit; }
   align-items: center;
 }
 
+.hero-card--login {
+  grid-template-columns: 1fr;
+  justify-items: center;
+  align-items: stretch;
+}
+
+.hero-card--login .auth-card {
+  width: 100%;
+}
+
+.hero-card--login .auth-card__split {
+  width: 100%;
+}
+
+.hero-card--login .auth-card__content {
+  padding-inline: 2rem;
+}
+
 .hero-card--warning {
   border-color: rgba(248, 113, 113, 0.28);
 }
@@ -138,6 +156,7 @@ a { color: inherit; }
   font-size: 0.75rem;
   text-transform: uppercase;
   letter-spacing: 0.16em;
+}
 
 .auth-landing {
   display: grid;
@@ -232,11 +251,12 @@ a { color: inherit; }
 .modal-overlay {
   position: fixed;
   inset: 0;
-  display: grid;
-  place-items: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   background: rgba(2, 6, 23, 0.66);
   backdrop-filter: blur(16px);
-  z-index: 20;
+  z-index: 9999;
   padding: 1rem;
 }
 
@@ -249,6 +269,8 @@ a { color: inherit; }
   border: 1px solid rgba(148, 163, 184, 0.2);
   box-shadow: 0 36px 90px rgba(2, 6, 23, 0.6);
   padding: 1.25rem;
+  position: relative;
+  z-index: 10000;
 }
 
 .modal-card__header,
@@ -276,10 +298,23 @@ a { color: inherit; }
   margin: 1rem 0;
 }
 
+.modal-card__label {
+  font-size: 0.875rem;
+  color: rgba(226, 232, 240, 0.82);
+}
+
 .modal-card__text {
   white-space: pre-line;
   color: rgba(226, 232, 240, 0.82);
   line-height: 1.65;
+}
+
+.modal-card__message {
+  padding: 0.85rem 1rem;
+  border-radius: 14px;
+  background: rgba(56, 189, 248, 0.12);
+  border: 1px solid rgba(56, 189, 248, 0.18);
+  color: #bae6fd;
 }
 
 .modal-card__checkbox {
@@ -294,31 +329,6 @@ a { color: inherit; }
   margin-top: 0.2rem;
 }
 
-.google-action {
-  display: inline-flex;
-}
-
-.google-action--disabled {
-  opacity: 0.55;
-}
-
-.hero-card--login {
-  grid-template-columns: 1fr;
-}
-}
-
-.hero-card__title,
-.dashboard-card__title,
-.login-card__title {
-  margin: 0.35rem 0 0;
-  font-size: clamp(2rem, 4vw, 4rem);
-  line-height: 1.03;
-}
-
-
-  .auth-landing__actions {
-    grid-template-columns: 1fr;
-  }
 .hero-card__text,
 .login-card__description {
   margin: 0;
@@ -424,6 +434,10 @@ a { color: inherit; }
 @media (max-width: 860px) {
   .hero-card {
     grid-template-columns: 1fr;
+  }
+
+  .hero-card--login .auth-card__content {
+    padding-inline: 1.35rem;
   }
 
   .dashboard-grid {
