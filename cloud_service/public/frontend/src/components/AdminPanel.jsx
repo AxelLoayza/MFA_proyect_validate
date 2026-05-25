@@ -34,7 +34,7 @@ export default function AdminPanel({ user, onLogout }) {
         <section className="admin-panel__content">
           {active === 'profile' && <ProfileView user={user} />}
           {active === 'orgs' && <OrganizationsView />}
-          {active === 'users' && <UserManagementView />}
+          {active === 'users' && <UserManagementView user={user} />}
         </section>
       </div>
     </div>

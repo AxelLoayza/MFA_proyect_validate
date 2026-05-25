@@ -43,6 +43,25 @@ export async function createTenant({ tenantKey, companyName, domain, tier }) {
   return { ok: resp.ok, status: resp.status, ...data }
 }
 
+export async function getTenants() {
+  const resp = await fetch(`${API_BASE_URL}/tenants`)
+  return resp.json()
+}
+
+export async function getManagedUsers(tenantId) {
+  const token = getAuthToken()
+  const url = new URL(`${API_BASE_URL}/auth/users`)
+
+  if (tenantId) {
+    url.searchParams.set('tenantId', tenantId)
+  }
+
+  const resp = await fetch(url.toString(), {
+    headers: token ? { Authorization: `Bearer ${token}` } : {}
+  })
+  return resp.json()
+}
+
 export function getAuthToken() {
   return localStorage.getItem('mfa_token')
 }

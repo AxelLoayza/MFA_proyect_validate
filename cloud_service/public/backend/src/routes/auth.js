@@ -5,10 +5,12 @@ const jwt = require('jsonwebtoken');
 const { OAuth2Client } = require('google-auth-library');
 const mongoose = require('mongoose');
 const crypto = require('crypto');
+const authenticate = require('../middleware/authenticate');
 
 const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 const User = require('../models/user');
 const ArcSession = require('../models/arcSession');
+const Tenant = require('../models/tenant');
 const BiometricProfile = require('../models/biometricProfile');
 const { encryptBiometric } = require('../utils/crypto');
 
@@ -769,7 +771,6 @@ router.post('/enroll', async (req, res) => {
 });
 
 // Protected endpoint to get current user based on server JWT
-const authenticate = require('../middleware/authenticate');
 router.get('/me', authenticate, async (req, res) => {
   try {
     const sub = req.serverJwt && req.serverJwt.sub;
@@ -780,6 +781,82 @@ router.get('/me', authenticate, async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'server_error' });
+  }
+});
+
+router.get('/users', authenticate, async (req, res) => {
+  try {
+    const currentUser = req.serverJwt?.sub
+      ? await User.findById(req.serverJwt.sub).lean()
+      : null;
+
+    if (!currentUser) {
+      return res.status(401).json({ error: 'user_not_found' });
+    }
+
+    if (currentUser.role !== 'superadmin') {
+      return res.status(403).json({ error: 'forbidden', message: 'Solo el superadmin puede listar usuarios' });
+    }
+
+    const tenantFilter = req.query.tenantId || currentUser.tenantId;
+    if (!tenantFilter) {
+      return res.status(400).json({ error: 'tenant_required', message: 'No se pudo resolver el tenant activo' });
+    }
+
+    if (!mongoose.Types.ObjectId.isValid(tenantFilter)) {
+      return res.status(400).json({ error: 'invalid_tenant', message: 'tenantId no es válido' });
+    }
+
+    const tenantObjectId = new mongoose.Types.ObjectId(tenantFilter);
+    const users = await User.aggregate([
+      { $match: { tenantId: tenantObjectId } },
+      {
+        $lookup: {
+          from: Tenant.collection.name,
+          localField: 'tenantId',
+          foreignField: '_id',
+          as: 'tenant'
+        }
+      },
+      { $unwind: { path: '$tenant', preserveNullAndEmptyArrays: true } },
+      {
+        $lookup: {
+          from: ArcSession.collection.name,
+          let: { userId: '$_id' },
+          pipeline: [
+            { $match: { $expr: { $eq: ['$userId', '$$userId'] } } },
+            { $sort: { createdAt: -1 } },
+            { $limit: 1 },
+            {
+              $project: {
+                _id: 1,
+                createdAt: 1,
+                expiresAt: 1,
+                acr: 1,
+                amr: 1,
+                clientId: 1,
+                jti: 1
+              }
+            }
+          ],
+          as: 'lastSession'
+        }
+      },
+      { $unwind: { path: '$lastSession', preserveNullAndEmptyArrays: true } },
+      {
+        $project: {
+          googleId: 0,
+          biometricTemplate: 0,
+          __v: 0
+        }
+      },
+      { $sort: { name: 1, email: 1 } }
+    ]);
+
+    res.json({ users });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'server_error', details: err.message });
   }
 });
 
