@@ -47,8 +47,8 @@ class Settings(BaseSettings):
     # ========================
     model_path: str = os.getenv("MODEL_PATH", "./models/lstm_signature_model.keras")
     model_version: str = os.getenv("MODEL_VERSION", "lstm_v1")
-    confidence_threshold: int = int(os.getenv("CONFIDENCE_THRESHOLD", "95"))
-    max_request_size: int = int(os.getenv("MAX_REQUEST_SIZE", "204800"))
+    confidence_threshold: float = float(os.getenv("CONFIDENCE_THRESHOLD", "0.7"))
+    max_request_size: int = int(os.getenv("MAX_REQUEST_SIZE", "1048576"))
     
     # ========================
     # ENVIRONMENT & LOGGING

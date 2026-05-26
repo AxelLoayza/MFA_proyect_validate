@@ -17,15 +17,49 @@ Protecciones:
   - Request size limit: 100 KB max
   - Points limit: 100-1200 puntos
 """
-from fastapi import APIRouter, HTTPException, status, Depends, Request
+from fastapi import APIRouter, HTTPException, status, Depends, Request, Header
 import logging
 from .models import NormalizationRequest, NormalizationResponse, EnrollmentRequest, EnrollmentResponse
 from .normalizer import normalize_stroke
 from .cloud_service import send_to_ml_service, send_enrollment_to_ml_service
+from .backend_service import forward_step_up_to_public_gateway
 from .rate_limiter import rate_limit_dependency
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["Biometric Normalization"])
+
+
+@router.post("/auth/step-up", dependencies=[Depends(rate_limit_dependency)])
+async def step_up_signature_login(
+    request: NormalizationRequest,
+    authorization: str = Header(...),
+    tenant_key: str | None = Header(default=None, alias="X-Tenant-Key"),
+    tenant_id: str | None = Header(default=None, alias="X-Tenant-Id"),
+) -> dict:
+    """
+    Step-up ARC 0.5 -> ARC 1.0.
+
+    Flutter envia la firma cruda al SDK/apiContainer; este servicio valida,
+    normaliza y reenvia la firma normalizada al Public Gateway.
+    """
+    try:
+        normalized_points, features = normalize_stroke(request)
+        normalized_signature = {
+            "normalized_stroke": [{"x": p.x, "y": p.y, "t": p.t, "p": p.p} for p in normalized_points],
+            "real_length": features.get("real_length"),
+            "features": features,
+        }
+        return forward_step_up_to_public_gateway(
+            normalized_signature=normalized_signature,
+            authorization=authorization,
+            tenant_key=tenant_key,
+            tenant_id=tenant_id,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Step-up normalization error: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Step-up normalization error: {str(e)}")
 
 
 @router.post("/normalize", response_model=NormalizationResponse, dependencies=[Depends(rate_limit_dependency)])

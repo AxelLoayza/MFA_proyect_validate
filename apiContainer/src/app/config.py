@@ -41,6 +41,10 @@ class Settings:
 
     # ========== CLOUD SERVICE (SDK INTEGRATION) ==========
     CLOUD_SERVICE_URL: str = os.getenv("CLOUD_SERVICE_URL", "http://localhost:4003")
+    PUBLIC_GATEWAY_STEP_UP_ENDPOINT: str = os.getenv(
+        "PUBLIC_GATEWAY_STEP_UP_ENDPOINT",
+        "http://localhost:4000/api/auth/step-up"
+    )
     SDK_API_KEY: str = os.getenv("SDK_API_KEY", "sdk_default_key")
     SDK_SECRET: str = os.getenv("SDK_SECRET", "sdk_default_secret")
 

@@ -18,18 +18,16 @@ def preprocess_signature(
     target_length: int = 400
 ) -> Tuple[np.ndarray, np.ndarray]:
     """
-    Complete preprocessing pipeline for signature data
+    Complete preprocessing pipeline for signature data (4 features configuration)
     
     Pipeline:
     1. Recuperar longitud real (deshacer padding)
     2. Resampling a 100 Hz
     3. Suavizado de coordenadas
-    4. Calcular velocidad y aceleración (diferencias centrales)
-    5. Calcular ángulo unwrap
-    6. Calcular curvatura
-    7. Normalizar por feature
-    8. Truncado inteligente (si > 400 puntos)
-    9. Padding final con máscara (a 400 puntos)
+    4. Calcular velocidad (diferencias centrales)
+    5. Normalizar por feature
+    6. Truncado inteligente (si > 400 puntos)
+    7. Padding final con máscara (a 400 puntos)
     
     Args:
         stroke_points: Lista de puntos normalizados (puede incluir padding)
@@ -39,7 +37,7 @@ def preprocess_signature(
         
     Returns:
         Tuple[np.ndarray, np.ndarray]: 
-            - features array (target_length, 8): [x, y, vx, vy, v_mag, theta, curv, pressure]
+            - features array (target_length, 4): [x, y, vx, vy]
             - mask array (target_length,): 1 para puntos reales, 0 para padding
     """
     logger.info(f"Starting preprocessing: {len(stroke_points)} points, real_length={real_length}")
@@ -90,7 +88,7 @@ def generate_master_feature(list_of_signatures: List[Tuple[np.ndarray, np.ndarra
     
     Args:
         list_of_signatures: Lista de 5 tuplas. Cada tupla contiene:
-            - features_array: np.ndarray (400, 8)
+            - features_array: np.ndarray (400, 4)
             - mask: np.ndarray (400,)
             Solo tomamos en cuenta los features.
             
@@ -103,11 +101,11 @@ def generate_master_feature(list_of_signatures: List[Tuple[np.ndarray, np.ndarra
     # Extraer solo los tensores de características y validar forma
     features_only = []
     for f, m in list_of_signatures:
-        if f.shape != (400, 8):
-            raise ValueError(f"Dimensión incorrecta en Tensor. Esperado (400,8), recibido {f.shape}")
+        if f.shape != (400, 4):
+            raise ValueError(f"Dimensión incorrecta en Tensor. Esperado (400,4), recibido {f.shape}")
         features_only.append(f)
         
-    # Apilamos en un nuevo eje: Resulta en tensor de shape (5, 400, 8)
+    # Apilamos en un nuevo eje: Resulta en tensor de shape (5, 400, 4)
     stacked = np.stack(features_only, axis=0)
     
     # Calculamos los promedios y tolerancias a lo largo del eje 0 (entre las 5 firmas)
@@ -252,31 +250,26 @@ def smooth_coordinates(sequence: np.ndarray, window_length: int = 7, polyorder: 
 
 def extract_advanced_features(sequence: np.ndarray) -> np.ndarray:
     """
-    Extraer features avanzadas: velocidad, aceleración, ángulo, curvatura
+    Extraer features avanzadas: velocidad en los ejes
     
-    Features finales (8):
+    Features finales (4):
     1. x (suavizado)
     2. y (suavizado)
     3. vx (velocidad en x)
     4. vy (velocidad en y)
-    5. v_magnitude (magnitud de velocidad)
-    6. theta (ángulo unwrap)
-    7. curvature (curvatura)
-    8. pressure (presión)
     
     Args:
         sequence: Array (n, 4) [x, y, t, p]
         
     Returns:
-        np.ndarray: Features (n, 8)
+        np.ndarray: Features (n, 4)
     """
     n = len(sequence)
-    features = np.zeros((n, 8))
+    features = np.zeros((n, 4))
     
     x = sequence[:, 0]
     y = sequence[:, 1]
     t = sequence[:, 2]
-    p = sequence[:, 3]
     
     # Features 1-2: Coordenadas suavizadas
     features[:, 0] = x
@@ -306,46 +299,6 @@ def extract_advanced_features(sequence: np.ndarray) -> np.ndarray:
     features[:, 2] = vx
     features[:, 3] = vy
     
-    # Feature 5: Magnitud de velocidad
-    v_magnitude = np.sqrt(vx**2 + vy**2)
-    features[:, 4] = v_magnitude
-    
-    # Feature 6: Ángulo unwrap
-    theta = np.arctan2(vy, vx)
-    theta_unwrap = np.unwrap(theta)  # Unwrap para continuidad
-    features[:, 5] = theta_unwrap
-    
-    # Feature 7: Curvatura
-    # Curvatura = |vx*ay - vy*ax| / (vx^2 + vy^2)^(3/2)
-    ax = np.zeros(n)
-    ay = np.zeros(n)
-    
-    # Aceleración con diferencias centrales
-    for i in range(1, n - 1):
-        dt_avg = (dt[i-1] + dt[i]) / 2.0
-        ax[i] = (vx[i+1] - vx[i-1]) / (2 * dt_avg) if dt_avg > 0 else 0
-        ay[i] = (vy[i+1] - vy[i-1]) / (2 * dt_avg) if dt_avg > 0 else 0
-    
-    # Bordes
-    if n > 1:
-        ax[0] = (vx[1] - vx[0]) / dt[0] if dt[0] > 0 else 0
-        ay[0] = (vy[1] - vy[0]) / dt[0] if dt[0] > 0 else 0
-        ax[-1] = (vx[-1] - vx[-2]) / dt[-1] if dt[-1] > 0 else 0
-        ay[-1] = (vy[-1] - vy[-2]) / dt[-1] if dt[-1] > 0 else 0
-    
-    # Curvatura
-    numerator = np.abs(vx * ay - vy * ax)
-    denominator = (vx**2 + vy**2)**(3/2)
-    denominator[denominator == 0] = 1e-10  # Evitar división por cero
-    curvature = numerator / denominator
-    
-    # Clip curvatura a rango razonable
-    curvature_clip = np.clip(curvature, -10, 10)
-    features[:, 6] = curvature_clip
-    
-    # Feature 8: Presión
-    features[:, 7] = p
-    
     return features
 
 
@@ -353,15 +306,13 @@ def normalize_features(features: np.ndarray) -> np.ndarray:
     """
     Normalización por feature según el tipo:
     - x, y: Min-Max a [0, 1]
-    - vx, vy, v_magnitude, curvature: Z-score
-    - theta: Normalizar a [-1, 1] (dividir por π)
-    - pressure: Ya está en [0, 1]
+    - vx, vy: Z-score
     
     Args:
-        features: Array (n, 8) sin normalizar
+        features: Array (n, 4) sin normalizar
         
     Returns:
-        np.ndarray: Features normalizadas (n, 8)
+        np.ndarray: Features normalizadas (n, 4)
     """
     normalized = features.copy()
     
@@ -372,25 +323,12 @@ def normalize_features(features: np.ndarray) -> np.ndarray:
         if max_val > min_val:
             normalized[:, i] = (features[:, i] - min_val) / (max_val - min_val)
     
-    # Features 2-4, 6: vx, vy, v_magnitude, curvature - Z-score
-    for i in [2, 3, 4, 6]:
+    # Features 2-3: vx, vy - Z-score
+    for i in [2, 3]:
         mean_val = features[:, i].mean()
         std_val = features[:, i].std()
         if std_val > 0:
             normalized[:, i] = (features[:, i] - mean_val) / std_val
-    
-    # Feature 5: theta_unwrap - Z-score (NO dividir por π)
-    # theta_unwrap puede estar en cualquier rango después del unwrap (±10π, ±20π, etc.)
-    # Mejor usar Z-score para normalizar como las otras features dinámicas
-    theta_mean = features[:, 5].mean()
-    theta_std = features[:, 5].std()
-    if theta_std > 0:
-        normalized[:, 5] = (features[:, 5] - theta_mean) / theta_std
-    else:
-        normalized[:, 5] = 0.0
-    
-    # Feature 7: pressure - Ya está en [0, 1], no hacer nada
-    # normalized[:, 7] = features[:, 7]
     
     return normalized
 
@@ -401,20 +339,16 @@ def validate_normalization(features: np.ndarray):
     Lanza excepción si hay problemas
     
     Args:
-        features: Array (n, 8) normalizado
+        features: Array (n, 4) normalizado
     """
     # Coordenadas en [0, 1] (con margen de tolerancia)
     assert features[:, :2].min() >= -0.01, f"x/y min too low: {features[:, :2].min()}"
     assert features[:, :2].max() <= 1.01, f"x/y max too high: {features[:, :2].max()}"
     
-    # Z-score features (vx, vy, v_mag, theta_unwrap, curvature): ~95% en [-3, 3]
-    z_features = features[:, [2, 3, 4, 5, 6]]
+    # Z-score features (vx, vy): ~95% en [-3, 3]
+    z_features = features[:, [2, 3]]
     z_mean = np.abs(z_features).mean()
     assert z_mean < 2.5, f"Z-score mean too high: {z_mean}"
-    
-    # Presión en [0, 1]
-    assert features[:, 7].min() >= -0.01, f"pressure min too low: {features[:, 7].min()}"
-    assert features[:, 7].max() <= 1.01, f"pressure max too high: {features[:, 7].max()}"
     
     # Sin NaN/Inf
     assert not np.any(np.isnan(features)), "Features contain NaN"
@@ -428,7 +362,7 @@ def intelligent_truncate(sequence: np.ndarray, target: int = 400) -> Tuple[np.nd
     Truncado inteligente eliminando warm-up y lifting
     
     Args:
-        sequence: Array (n, 8) con features
+        sequence: Array (n, 4) con features
         target: Longitud objetivo (default 400)
         
     Returns:
@@ -441,8 +375,8 @@ def intelligent_truncate(sequence: np.ndarray, target: int = 400) -> Tuple[np.nd
     if n <= target:
         return sequence, list(range(n))
     
-    # Detectar warm-up dinámicamente usando magnitud de velocidad (feature 4)
-    velocities = sequence[:, 4]  # v_magnitude
+    # Detectar warm-up dinámicamente calculando magnitud de velocidad: sqrt(vx^2 + vy^2)
+    velocities = np.sqrt(sequence[:, 2]**2 + sequence[:, 3]**2)
     
     # Warm-up: hasta que velocidad supera 20% del máximo
     max_velocity = velocities.max()
@@ -485,12 +419,12 @@ def apply_padding_with_mask(sequence: np.ndarray, target_length: int = 400) -> T
     Padding final con máscara
     
     Args:
-        sequence: Array (n, 8) con features
+        sequence: Array (n, 4) con features
         target_length: Longitud objetivo (default 400)
         
     Returns:
         Tuple[np.ndarray, np.ndarray]:
-            - Secuencia con padding (target_length, 8)
+            - Secuencia con padding (target_length, 4)
             - Máscara (target_length,): 1 para reales, 0 para padding
     """
     n = len(sequence)

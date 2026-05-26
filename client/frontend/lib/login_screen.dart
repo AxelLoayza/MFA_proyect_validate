@@ -5,8 +5,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:http/http.dart' as http;
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'enrollment_screen.dart';
+import 'signature_login_screen.dart';
 
 class StrokePoint {
   final double x;
@@ -69,6 +71,7 @@ class LoginScreen extends StatefulWidget {
 
 class _LoginScreenState extends State<LoginScreen> {
   final String _backendUrl = dotenv.env['BACKEND_URL'] ?? 'http://localhost:4000';
+  final String _apiContainerUrl = dotenv.env['API_CONTAINER_URL'] ?? 'http://localhost:9001';
   final String _googleClientId =
       dotenv.env['GOOGLE_CLIENT_ID'] ?? '246681881290-tpsk8rdg9rlt9t69j7o6dnfjf6cq21uq.apps.googleusercontent.com';
 
@@ -77,6 +80,7 @@ class _LoginScreenState extends State<LoginScreen> {
   String? _arc;
   String? _email;
   String? _name;
+  String? _tenantKey;
   bool _isLoading = false;
   String _statusMessage = 'Inicia sesión con Google para obtener ARC 0.5.';
 
@@ -211,9 +215,15 @@ class _LoginScreenState extends State<LoginScreen> {
         _arc = responseJson['arc']?.toString();
         _email = user['email']?.toString() ?? account.email;
         _name = user['name']?.toString() ?? account.displayName;
+        _tenantKey = responseJson['tenantKey']?.toString() ?? user['tenantKey']?.toString();
         _statusMessage = 'Sesión iniciada correctamente con ARC ${_arc ?? '0.5'}.';
         _isLoading = false;
       });
+
+      if (_accessToken != null && _accessToken!.isNotEmpty) {
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString('mfa_token', _accessToken!);
+      }
 
       if (!mounted) return;
       _showMessage('✓ Google Sign-In correcto. ARC ${_arc ?? '0.5'} obtenido.');
@@ -240,6 +250,30 @@ class _LoginScreenState extends State<LoginScreen> {
     );
   }
 
+  Future<void> _continueToSignatureLogin() async {
+    if (_accessToken == null) return;
+
+    final stepUpToken = await Navigator.of(context).push<String>(
+      MaterialPageRoute(
+        builder: (_) => SignatureLoginScreen(
+          jwtToken: _accessToken!,
+          apiContainerUrl: _apiContainerUrl,
+          tenantKey: _tenantKey,
+        ),
+      ),
+    );
+
+    if (stepUpToken != null && stepUpToken.isNotEmpty) {
+      setState(() {
+        _accessToken = stepUpToken;
+        _arc = '1.0';
+        _statusMessage = 'Login biometrico completado. ARC 1.0 activo.';
+      });
+      if (!mounted) return;
+      _showMessage('Login biometrico completado. ARC 1.0 activo.');
+    }
+  }
+
   Future<void> _resetSession() async {
     await _googleSignIn?.signOut();
     setState(() {
@@ -247,6 +281,7 @@ class _LoginScreenState extends State<LoginScreen> {
       _arc = null;
       _email = null;
       _name = null;
+      _tenantKey = null;
       _statusMessage = 'Inicia sesión con Google para obtener ARC 0.5.';
     });
   }
@@ -395,6 +430,18 @@ class _LoginScreenState extends State<LoginScreen> {
                           ),
                         ),
                         child: const Text('Continuar al enrolamiento biométrico'),
+                      ),
+                      const SizedBox(height: 12),
+                      OutlinedButton(
+                        onPressed: _continueToSignatureLogin,
+                        style: OutlinedButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(vertical: 16),
+                          side: const BorderSide(color: Color(0xFF111827)),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(16),
+                          ),
+                        ),
+                        child: const Text('Validar firma y subir a ARC 1.0'),
                       ),
                       const SizedBox(height: 12),
                       TextButton(

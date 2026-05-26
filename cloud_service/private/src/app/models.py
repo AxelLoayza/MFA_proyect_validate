@@ -51,12 +51,24 @@ class BiometricRequest(BaseModel):
 
 
 class BiometricResponse(BaseModel):
-    """Response payload to apiContainer"""
+    """Response payload to apiContainer / Node.js"""
     is_valid: bool = Field(..., description="Whether signature is valid")
     confidence: float = Field(..., description="Confidence score 0.0-1.0", ge=0.0, le=1.0)
-    user_id: Optional[str] = Field(None, description="Matched user ID if valid")
+    distance: float = Field(..., description="Euclidean distance between embeddings")
     message: str = Field(..., description="Human-readable message")
     details: Dict[str, Any] = Field(default_factory=dict, description="Additional details")
+
+
+class MasterFeature(BaseModel):
+    """Tensor de referencia para la firma del usuario"""
+    mean: List[List[float]] = Field(..., description="Tensor promedio (400x4)")
+    std: List[List[float]] = Field(..., description="Tensor desviación estándar (400x4)")
+
+
+class ValidationCloudRequest(BaseModel):
+    """Request payload from Node.js para validar: Master vs Live"""
+    live_signature: BiometricRequest = Field(..., description="La nueva firma a validar")
+    master_feature: MasterFeature = Field(..., description="El feature maestro desencriptado previamente por Node.js")
 
 
 class EnrollmentCloudRequest(BaseModel):

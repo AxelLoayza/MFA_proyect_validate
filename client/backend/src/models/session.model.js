@@ -1,4 +1,28 @@
+const mongoose = require('mongoose');
 const pool = require('../config/database');
+
+const ArcSessionSchema = new mongoose.Schema({
+  userId: { type: String, required: true, index: true },
+  tenantId: { type: mongoose.Schema.Types.Mixed, index: true },
+  tenantKey: { type: String, index: true },
+  acr: { type: String, required: true },
+  amr: { type: [String], default: [] },
+  result: { type: String, enum: ['accept', 'reject', 'challenge', 'error'], required: true },
+  distance: Number,
+  confidence: Number,
+  threshold: Number,
+  reason: String,
+  source: { type: String, default: 'biometric_signature' },
+  ip: String,
+  userAgent: String,
+  tokenJti: String,
+  createdAt: { type: Date, default: Date.now }
+}, {
+  collection: 'arcsessions',
+  versionKey: false
+});
+
+const ArcSession = mongoose.models.ArcSession || mongoose.model('ArcSession', ArcSessionSchema);
 
 async function createLoginSession({ login_id, user_id, nonce, temp_token, expires_at }) {
   const { rows } = await pool.query(
@@ -38,5 +62,7 @@ module.exports = {
   createLoginSession,
   getSessionByLoginId,
   markSessionCompleted,
-  expireSession
+  expireSession,
+  ArcSession,
+  createArcSessionAudit: (payload) => ArcSession.create(payload)
 };

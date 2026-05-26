@@ -5,6 +5,8 @@ const logger = require('../config/logger');
 const axios = require('axios');
 const pool = require('../config/database');
 const TokenService = require('../services/token.service');
+const loginValidationService = require('../services/loginValidation.service');
+const { enrollUserBiometrics } = require('../services/enrollment.orquestador');
 const { v4: uuidv4 } = require('uuid');
 
 async function login(req, res, next) {
@@ -32,6 +34,11 @@ async function login(req, res, next) {
 
 async function stepUp(req, res, next) {
   try {
+    if (req.body.signature || req.body.normalized_signature || req.body.normalizedSignature) {
+      const result = await loginValidationService.validateSignatureStepUp(req);
+      return res.status(200).json(result);
+    }
+
     const bypassEnabled = process.env.BYPASS_CLOUD_ASSERTION === 'true';
     const { signedAssertion } = req.body;
 
@@ -260,8 +267,19 @@ async function googleExchange(req, res, next) {
 // Stub for biometric enrollment - placeholder implementation
 async function enrollBiometric(req, res, next) {
   try {
-    // Expecting body with enrollment data; for now return 501 Not Implemented
-    res.status(501).json({ error: 'enrollBiometric not implemented on server' });
+    const tokenPayload = req.user || {};
+    const userId = req.body.userId || tokenPayload.sub || tokenPayload.userId;
+    const tenantId = req.body.tenantId || tokenPayload.tenantId || tokenPayload.tenant_id;
+    const tenantKey = req.body.tenantKey || tokenPayload.tenantKey || tokenPayload.tenant_key;
+    const signatures = req.body.signatures;
+
+    if (!userId) return res.status(400).json({ error: 'userId required' });
+    if (!Array.isArray(signatures) || signatures.length !== 5) {
+      return res.status(400).json({ error: 'exactly 5 signatures are required' });
+    }
+
+    const result = await enrollUserBiometrics(userId, signatures, { tenantId, tenantKey });
+    res.status(200).json(result);
   } catch (err) {
     next(err);
   }

@@ -2,11 +2,12 @@
 API routes for biometric validation
 """
 import logging
+import os
 from typing import Dict, Any
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import JSONResponse
 
-from .models import BiometricRequest, BiometricResponse, HealthResponse, EnrollmentCloudRequest, MasterFeatureResponse
+from .models import BiometricRequest, BiometricResponse, HealthResponse, EnrollmentCloudRequest, MasterFeatureResponse, ValidationCloudRequest
 from .auth import verify_credentials
 from .utils import (
     RateLimiter, 
@@ -14,6 +15,8 @@ from .utils import (
     validate_stroke_points
 )
 from .preprocessing import preprocess_signature, generate_master_feature
+from .model_loader import compute_embedding
+import numpy as np
 
 logger = logging.getLogger(__name__)
 
@@ -36,127 +39,107 @@ async def health_check():
         HealthResponse: Service health status
     """
     from . import __version__
+    from .main import ml_model
     
     return HealthResponse(
         status="healthy",
         version=__version__,
-        model_loaded=model_loaded
+        model_loaded=(ml_model is not None)
     )
 
 
 @router.post("/api/biometric/validate", response_model=BiometricResponse)
 async def validate_biometric(
     request: Request,
-    payload: BiometricRequest,
+    payload: ValidationCloudRequest,
     authenticated: bool = Depends(verify_credentials)
 ):
     """
-    Validate biometric signature data
+    Validate biometric signature data (Step-Up Flow)
     
-    This endpoint receives normalized stroke data from apiContainer,
-    validates it, applies additional padding if needed, and processes
-    it through the LSTM model for authentication.
+    This endpoint receives the Live Signature and the decrypted Master Feature 
+    tensor directly from the apiContainer (Node.js). Python does NOT contact MongoDB.
     
-    Args:
-        request: FastAPI Request object (for IP extraction)
-        payload: BiometricRequest with normalized stroke and features
-        authenticated: Authentication dependency
-        
     Returns:
-        BiometricResponse: Validation result with confidence score
-        
-    Raises:
-        HTTPException: 429 if rate limit exceeded, 400 if invalid data
+        BiometricResponse: Validation result with distance and confidence score
     """
     # Get client IP
     client_ip = get_client_ip(request)
-    logger.info(f"Received validation request from {client_ip}")
+    logger.info(f"Received Validation ValidationCloudRequest request from Node.js (Gateway): {client_ip}")
     
-    # Check rate limit
-    if not rate_limiter.check_rate_limit(client_ip):
-        logger.warning(f"Rate limit exceeded for IP: {client_ip}")
-        raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail="Rate limit exceeded: max 20 requests per minute"
-        )
+    # Extract live signature data
+    live_request = payload.live_signature
+    master_feature = payload.master_feature
     
     try:
+        from .main import ml_model
+        if ml_model is None:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="LSTM Model is not loaded. Cannot process validation."
+            )
+            
         # Validate stroke points
         is_valid, error_msg = validate_stroke_points(
-            payload.normalized_stroke,
+            live_request.normalized_stroke,
             min_points=100,
             max_points=1200
         )
         
         if not is_valid:
-            logger.error(f"Invalid stroke data: {error_msg}")
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=error_msg
-            )
-        
-        # Reject signatures with real_length < 100 - no value for ML model
-        if payload.real_length < 100:
-            logger.warning(f"Signature rejected: real_length too short ({payload.real_length} < 100)")
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Signature too short: {payload.real_length} points (minimum 100 required)"
-            )
-        
-        # Log received data
+            raise HTTPException(status_code=400, detail=error_msg)
+            
         print("=" * 80)
-        print("📥 DATOS RECIBIDOS DESDE apiContainer")
+        print("🤖 [NEURO-ENGINE] PROCESANDO FIRMA EN VIVO VS MASTER-FEATURE")
         print("=" * 80)
-        print(f"  📊 Puntos normalizados: {len(payload.normalized_stroke)}")
-        print(f"  📏 Longitud real (sin padding): {payload.real_length}")
-        print(f"  📐 Distancia total: {payload.features.total_distance:.2f} px")
-        print(f"  🏃 Velocidad promedio: {payload.features.velocity_mean:.2f} px/ms")
-        print(f"  ⚡ Velocidad máxima: {payload.features.velocity_max:.2f} px/ms")
-        print(f"  ⏱️  Duración: {payload.features.duration_ms} ms")
-        print("-" * 80)
         
-        logger.info(f"Processing stroke: {len(payload.normalized_stroke)} points (real: {payload.real_length}), "
-                   f"distance={payload.features.total_distance}, "
-                   f"velocity_mean={payload.features.velocity_mean}")
+        # 1. Preprocesar Firma Viva
+        features_array, mask = preprocess_signature(
+            stroke_points=live_request.normalized_stroke,
+            real_length=live_request.real_length,
+            target_frequency=100,
+            target_length=400
+        )
         
-        # Advanced preprocessing pipeline
-        try:
-            features_array, mask = preprocess_signature(
-                stroke_points=payload.normalized_stroke,
-                real_length=payload.real_length,
-                target_frequency=100,
-                target_length=400
-            )
+        # 2. Computar Embedding Firma Viva (128,)
+        live_embedding = compute_embedding(ml_model, features_array)
+        
+        # 3. Computar Embedding de MasterFeature
+        # Node.js nos envía master_feature.mean, que es lista de listas, lo convertimos a tensor
+        master_tensor = np.array(master_feature.mean) # (400, 4)
+        if master_tensor.shape != (400, 4):
+            raise ValueError(f"Master feature array shape mismatch, expected (400, 4) got {master_tensor.shape}")
             
-            # Mensaje de éxito con información detallada
-            valid_points = int(mask.sum())
-            padded_points = int((1 - mask).sum())
-            
-            print("✅ PREPROCESAMIENTO COMPLETADO")
-            print(f"  🎯 Shape final: {features_array.shape} (400 puntos × 8 features)")
-            print(f"  ✔️  Puntos válidos: {valid_points}")
-            print(f"  ➕ Puntos con padding: {padded_points}")
-            print(f"  📊 Features: [x, y, vx, vy, v_mag, theta, curvature, pressure]")
-            print(f"  🎭 Máscara aplicada: {mask.sum()}/{len(mask)} puntos reales")
-            print("=" * 80)
-            print()
-            
-            logger.info(f"Preprocessing complete: features shape={features_array.shape}, mask sum={mask.sum()}")
-        except ValueError as e:
-            logger.error(f"Preprocessing failed: {str(e)}")
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Preprocessing error: {str(e)}"
-            )
+        master_embedding = compute_embedding(ml_model, master_tensor)
+        
+        # 4. Calcular Distancia Euclidiana
+        distance = float(np.linalg.norm(master_embedding - live_embedding))
+        
+        # 5. Generar Score / Threshold logica
+        THRESHOLD = float(os.getenv("LSTM_DISTANCE_THRESHOLD", "1e-9"))
+        is_recognized = distance < THRESHOLD
+        confidence = max(0.0, 1.0 - (distance / (THRESHOLD * 2)))  # Ejemplo heurístico
+        
+        print(f"📊 DISTANCIA EUCLIDIANA: {distance:.4f}")
+        print(f"🎯 MATCH CONFIDENCE: {confidence:.2%}")
+        print(f"✅ ACCEPTED: {is_recognized}")
+        print("=" * 80)
+        
+        return BiometricResponse(
+            is_valid=is_recognized,
+            confidence=confidence,
+            distance=distance,
+            message="Validación completada.",
+            details={"distance": distance, "threshold": THRESHOLD}
+        )
             
     except HTTPException:
-        # Re-raise HTTP exceptions
         raise
     except Exception as e:
-        logger.error(f"Unexpected error: {str(e)}")
+        logger.error(f"Unexpected error: {str(e)}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Error procesando la biometría"
+            detail=f"Error procesando la neuro-validación: {str(e)}"
         )
 
 @router.post("/api/biometric/enroll", response_model=MasterFeatureResponse)

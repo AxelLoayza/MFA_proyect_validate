@@ -6,7 +6,8 @@
   "scripts": {
     "start": "node src/server.js",
     "dev": "nodemon --watch src --exec node src/server.js",
-    "migrate:login-sessions": "node src/scripts/ensure_login_sessions_google.js"
+    "migrate:login-sessions": "node src/scripts/ensure_login_sessions_google.js",
+    "seed:test-login": "node src/scripts/seed_and_test_biometric_login.js"
   },
   "keywords": [],
   "author": "",

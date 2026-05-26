@@ -15,7 +15,7 @@ const PYTHON_SERVICE_URL = process.env.CLOUD_SERVICE_URL || 'http://localhost:80
  * @param {Array} signatures - Arreglo con las 5 firmas (puntos, duración, etc.)
  * @returns {Object} - Respuesta de éxito o error
  */
-async function enrollUserBiometrics(userId, signatures) {
+async function enrollUserBiometrics(userId, signatures, tenantContext = {}) {
     try {
         console.log(`[Orquestador] Iniciando enrolamiento biométrico para usuario ID: ${userId}`);
         console.log(`[Orquestador] Firmas recibidas: ${signatures.length}`);
@@ -54,14 +54,24 @@ async function enrollUserBiometrics(userId, signatures) {
         // 4. Guardar (o actualizar) en MongoDB mediante el modelo de Mongoose
         // Usamos findOneAndUpdate con 'upsert: true' por si el usuario está rehaciendo sus firmas,
         // esto sobrescribirá el modelo viejo en lugar de duplicarlo.
+        const tenantId = tenantContext.tenantId;
+        const tenantKey = tenantContext.tenantKey;
+
+        if (!tenantId && !tenantKey) {
+            throw new Error("tenantId o tenantKey es requerido para guardar biometria multi-tenant.");
+        }
+
         const profile = await BiometricProfile.findOneAndUpdate(
-            { userId: userId }, 
+            { userId: String(userId), ...(tenantId ? { tenantId } : { tenantKey }) },
             {
-                userId: userId,
+                userId: String(userId),
+                tenantId,
+                tenantKey,
                 masterFeatureEncrypted: encryptedData,
                 iv: iv,
                 authTag: authTag,
                 samplesUsed: signatures.length,
+                modelVersion: 'lstm_mini_v1',
                 lastUpdated: new Date()
             },
             { upsert: true, new: true } // crea si no existe, actualiza si ya existía

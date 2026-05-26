@@ -1,3 +1,0 @@
-"""
-Routes package - API endpoints
-"""

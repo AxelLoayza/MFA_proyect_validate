@@ -12,7 +12,6 @@ from dotenv import load_dotenv
 from .routes import router
 from .utils import RateLimiter
 from .config import settings
-from .database import db_connection
 
 # Load environment variables
 load_dotenv()
@@ -24,6 +23,9 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+
+# Global variable for the loaded Model
+ml_model = None
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -45,19 +47,13 @@ async def lifespan(app: FastAPI):
     logger.info(f"Confidence Threshold: {settings.confidence_threshold}%")
     logger.info(f"TLS Enabled: {settings.tls_enabled}")
     
-    # MongoDB Connection
-    logger.info(f"MongoDB URI: {settings.mongo_uri}")
-    logger.info(f"Database: {settings.mongo_db_name}")
+    # MongoDB Connection (REMOVED per architecture - Python is strictly stateless)
+    logger.info("MongoDB DB Connection Disabled - Following API Gateway strict architecture")
     
-    if db_connection.connect():
-        logger.info("✓ MongoDB connection initialized successfully")
-    else:
-        logger.error("✗ Failed to connect to MongoDB - service will run with limited functionality")
-    
-    # TODO: Load LSTM model here
-    # global model
-    # model = load_lstm_model(settings.model_path)
-    logger.info("Model loading deferred (not implemented yet)")
+    # Load LSTM model here
+    from .model_loader import load_ml_model
+    global ml_model
+    ml_model = load_ml_model()
     
     logger.info("Startup complete - Ready to accept requests")
     
@@ -65,8 +61,7 @@ async def lifespan(app: FastAPI):
     
     # Shutdown
     logger.info("Shutting down Cloud Service")
-    db_connection.disconnect()
-    logger.info("MongoDB connection closed")
+    logger.info("Stateless Python Engine shut down successfully")
 
 
 # Create FastAPI application
@@ -109,7 +104,7 @@ async def limit_request_size(request: Request, call_next):
     """
     Middleware to limit request body size
     """
-    max_size = int(os.getenv("MAX_REQUEST_SIZE", "102400"))  # 100 KB default
+    max_size = settings.max_request_size
     
     # Check Content-Length header
     content_length = request.headers.get("content-length")
