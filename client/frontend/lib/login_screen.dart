@@ -71,6 +71,7 @@ class LoginScreen extends StatefulWidget {
 
 class _LoginScreenState extends State<LoginScreen> {
   final String _backendUrl = dotenv.env['BACKEND_URL'] ?? 'http://localhost:4000';
+  final String _publicBackendUrl = dotenv.env['PUBLIC_BACKEND_URL'] ?? 'http://localhost:4003';
   final String _googleClientId =
       dotenv.env['GOOGLE_CLIENT_ID'] ?? '246681881290-tpsk8rdg9rlt9t69j7o6dnfjf6cq21uq.apps.googleusercontent.com';
 
@@ -209,21 +210,21 @@ class _LoginScreenState extends State<LoginScreen> {
       final responseJson = jsonDecode(response.body) as Map<String, dynamic>;
       final user = (responseJson['user'] as Map?)?.cast<String, dynamic>() ?? const {};
 
-      final accessToken = responseJson['access_token']?.toString();
+      final sessionToken = responseJson['access_token']?.toString();
 
       setState(() {
-        _accessToken = accessToken;
+        _accessToken = sessionToken;
         _arc = responseJson['arc']?.toString();
         _email = user['email']?.toString() ?? account.email;
         _name = user['name']?.toString() ?? account.displayName;
-        _biometricEnrolled = false;
+        _biometricEnrolled = user['biometricEnrolled'] == true;
         _statusMessage = 'Sesión iniciada correctamente con ARC ${_arc ?? '0.5'}.';
         _isLoading = false;
       });
 
-      if (accessToken != null && accessToken.isNotEmpty) {
+      if (sessionToken != null && sessionToken.isNotEmpty) {
         final prefs = await SharedPreferences.getInstance();
-        await prefs.setString('mfa_token', accessToken);
+        await prefs.setString('mfa_token', sessionToken);
       }
 
       if (!mounted) return;
@@ -267,7 +268,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
   Future<Map<String, dynamic>?> _fetchCurrentUser(String token) async {
     final response = await http.get(
-      Uri.parse('$_backendUrl/auth/me'),
+      Uri.parse('$_publicBackendUrl/auth/me'),
       headers: {'Authorization': 'Bearer $token'},
     );
 
@@ -279,6 +280,10 @@ class _LoginScreenState extends State<LoginScreen> {
     return (payload['user'] as Map?)?.cast<String, dynamic>() ?? const {};
   }
 
+  bool _isBiometricEnrolled(Map<String, dynamic> user) {
+    return user['biometricEnrolled'] == true;
+  }
+
   Future<void> _continueToNextStepAfterLogin() async {
     if (_accessToken == null) return;
 
@@ -286,16 +291,22 @@ class _LoginScreenState extends State<LoginScreen> {
     if (user == null) {
       final prefs = await SharedPreferences.getInstance();
       await prefs.remove('mfa_token');
+      if (mounted) {
+        setState(() {
+          _biometricEnrolled = false;
+        });
+      }
       return;
     }
 
-    final biometricTemplate = user['biometricTemplate'];
-    final hasBiometric = biometricTemplate is Map && biometricTemplate['biometricProfileId'] != null;
+    final hasBiometric = _isBiometricEnrolled(user);
+
+    if (!mounted) return;
 
     final biometricResult = await Navigator.of(context).push<String>(
       MaterialPageRoute(
         builder: (_) => hasBiometric
-            ? SignatureLoginScreen(jwtToken: _accessToken!, backendUrl: _backendUrl)
+            ? SignatureLoginScreen(jwtToken: _accessToken!)
             : EnrollmentScreen(jwtToken: _accessToken!),
       ),
     );
@@ -306,7 +317,7 @@ class _LoginScreenState extends State<LoginScreen> {
       setState(() {
         _accessToken = biometricResult;
         _arc = '1.0';
-        _biometricEnrolled = true;
+        _biometricEnrolled = hasBiometric;
         _statusMessage = hasBiometric
             ? 'Login biométrico completado. ARC 1.0 activo.'
             : 'Enrolamiento completado. ARC 1.0 activo.';

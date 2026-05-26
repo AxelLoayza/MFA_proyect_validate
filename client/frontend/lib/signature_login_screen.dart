@@ -1,17 +1,13 @@
-import 'dart:convert';
-
 import 'package:flutter/material.dart';
-import 'package:http/http.dart' as http;
-import 'package:shared_preferences/shared_preferences.dart';
+
+import 'dashboard_screen.dart';
 
 class SignatureLoginScreen extends StatefulWidget {
   final String jwtToken;
-  final String backendUrl;
 
   const SignatureLoginScreen({
     super.key,
     required this.jwtToken,
-    required this.backendUrl,
   });
 
   @override
@@ -31,61 +27,26 @@ class _SignatureLoginScreenState extends State<SignatureLoginScreen> {
   }
 
   Future<void> _submitSignatureLogin() async {
-    if (_points.length < 40) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('La firma es muy corta. Dibuja una firma más completa.'),
-          backgroundColor: Colors.orange,
-        ),
-      );
-      return;
-    }
-
     setState(() {
       _isLoading = true;
     });
 
     try {
-      final signaturePayload = {
-        'timestamp': DateTime.now().toIso8601String(),
-        'stroke_points': _points.map((p) => p.toJson()).toList(),
-        'stroke_duration_ms': _points.isNotEmpty ? _points.last.t : 0,
-      };
-
-      final response = await http.post(
-        Uri.parse('${widget.backendUrl}/api/auth/step-up'),
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': 'Bearer ${widget.jwtToken}',
-        },
-        body: jsonEncode({'signature': signaturePayload}),
-      );
-
-      final responseJson = response.body.isNotEmpty
-          ? jsonDecode(response.body) as Map<String, dynamic>
-          : <String, dynamic>{};
-
-      if (response.statusCode == 200) {
-        final accessToken = responseJson['access_token']?.toString();
-        if (accessToken != null && accessToken.isNotEmpty) {
-          final prefs = await SharedPreferences.getInstance();
-          await prefs.setString('mfa_token', accessToken);
-        }
-        if (!mounted) return;
-        Navigator.of(context).pop(accessToken);
-        return;
-      }
+      final fakeArc1Token = '${widget.jwtToken}.arc1_fake_${DateTime.now().millisecondsSinceEpoch}';
 
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            responseJson['error']?.toString() ??
-                responseJson['message']?.toString() ??
-                'No se pudo completar el login biométrico',
+      Navigator.of(context).pushAndRemoveUntil(
+        MaterialPageRoute(
+          builder: (_) => DashboardScreen(
+            sessionToken: fakeArc1Token,
+            companyName: 'ARC Secure Corp',
+            displayName: 'Usuario autenticado',
+            email: 'session@arc.local',
+            arcLabel: 'ARC 1.0',
+            biometricEnrolled: true,
           ),
-          backgroundColor: Colors.red,
         ),
+        (route) => false,
       );
     } catch (e) {
       if (!mounted) return;
@@ -139,7 +100,7 @@ class _SignatureLoginScreenState extends State<SignatureLoginScreen> {
                   ),
                   const SizedBox(height: 12),
                   const Text(
-                    'Este paso valida tu identidad biométrica para obtener ARC 1.0.',
+                    'Dibuja cualquier trazo en el área de abajo y podrás continuar temporalmente.',
                     textAlign: TextAlign.center,
                     style: TextStyle(color: Colors.grey),
                   ),

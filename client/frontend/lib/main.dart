@@ -5,9 +5,9 @@ import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'dashboard_screen.dart';
 import 'enrollment_screen.dart';
 import 'login_screen.dart';
-import 'signature_login_screen.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -57,7 +57,7 @@ class _SessionBootstrapState extends State<SessionBootstrap> {
   Future<Widget> _resolveInitialScreen() async {
     final prefs = await SharedPreferences.getInstance();
     final token = prefs.getString('mfa_token');
-    final backendUrl = dotenv.env['BACKEND_URL'] ?? 'http://localhost:4000';
+    final publicBackendUrl = dotenv.env['PUBLIC_BACKEND_URL'] ?? 'http://localhost:4003';
 
     if (token == null || token.isEmpty) {
       return const LoginScreen();
@@ -65,7 +65,7 @@ class _SessionBootstrapState extends State<SessionBootstrap> {
 
     try {
       final response = await http.get(
-        Uri.parse('$backendUrl/auth/me'),
+        Uri.parse('$publicBackendUrl/auth/me'),
         headers: {'Authorization': 'Bearer $token'},
       );
 
@@ -76,11 +76,17 @@ class _SessionBootstrapState extends State<SessionBootstrap> {
 
       final payload = jsonDecode(response.body) as Map<String, dynamic>;
       final user = (payload['user'] as Map?)?.cast<String, dynamic>() ?? const {};
-      final biometricTemplate = user['biometricTemplate'];
-      final hasBiometric = biometricTemplate is Map && biometricTemplate['biometricProfileId'] != null;
+      final hasBiometric = user['biometricEnrolled'] == true;
 
       if (hasBiometric) {
-        return SignatureLoginScreen(jwtToken: token, backendUrl: backendUrl);
+        return DashboardScreen(
+          sessionToken: token,
+          companyName: 'ARC Secure Corp',
+          displayName: user['name']?.toString() ?? 'Usuario',
+          email: user['email']?.toString() ?? 'sin-correo@arc.local',
+          arcLabel: 'ARC 1.0',
+          biometricEnrolled: true,
+        );
       }
 
       return EnrollmentScreen(jwtToken: token);

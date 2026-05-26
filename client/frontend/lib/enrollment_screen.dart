@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
+
+import 'dashboard_screen.dart';
 import 'login_screen.dart'; // Importamos StrokePoint y StrokePainter
 
 class EnrollmentScreen extends StatefulWidget {
@@ -137,26 +139,20 @@ class _EnrollmentScreenState extends State<EnrollmentScreen> {
   }
 
   void _showSuccessDialog(String? accessToken) {
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => AlertDialog(
-        title: const Text('¡Enrolamiento Exitoso!'),
-        content: const Text(
-          'Tu biometría conductual ha sido generada, encriptada y guardada de manera segura. '
-          'Ahora puedes iniciar sesión utilizando tu firma.',
+    if (!mounted) return;
+
+    Navigator.of(context).pushAndRemoveUntil(
+      MaterialPageRoute(
+        builder: (_) => DashboardScreen(
+          sessionToken: accessToken ?? widget.jwtToken,
+          companyName: 'ARC Secure Corp',
+          displayName: 'Usuario autenticado',
+          email: 'session@arc.local',
+          arcLabel: 'ARC 1.0',
+          biometricEnrolled: true,
         ),
-        actions: [
-          TextButton(
-            onPressed: () {
-              // Cerrar diálogo y regresar al Login
-              Navigator.of(context).pop();
-              Navigator.of(context).pop(accessToken); // Salir de EnrollmentScreen con ARC 1.0 si existe
-            },
-            child: const Text('Finalizar'),
-          ),
-        ],
       ),
+      (route) => false,
     );
   }
 

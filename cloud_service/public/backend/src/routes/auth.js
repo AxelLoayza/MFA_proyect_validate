@@ -777,7 +777,16 @@ router.get('/me', authenticate, async (req, res) => {
     if (!sub) return res.status(401).json({ error: 'invalid_token' });
     const user = await User.findById(sub).lean();
     if (!user) return res.status(404).json({ error: 'user_not_found' });
-    res.json({ user });
+
+    res.json({
+      user: {
+        ...user,
+        _id: user._id?.toString?.() || user._id,
+        tenantId: user.tenantId?.toString?.() || null,
+        biometricTemplate: user.biometricTemplate ?? null,
+        biometricEnrolled: Boolean(user.biometricTemplate?.biometricProfileId)
+      }
+    });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'server_error' });
