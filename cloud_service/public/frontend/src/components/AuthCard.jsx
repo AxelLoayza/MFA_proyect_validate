@@ -49,9 +49,10 @@ export default function AuthCard({ onLogin, onNeedsRegistration }) {
       const response = action === 'register'
         ? await registerWithGoogle(id_token)
         : await loginWithGoogle(id_token)
+      const authToken = response.token || response.access_token
 
-      if (response.ok && response.token) {
-        localStorage.setItem('mfa_token', response.token)
+      if (response.ok && authToken) {
+        localStorage.setItem('mfa_token', authToken)
         const meResponse = await fetchMe()
         if (meResponse?.user) {
           onLogin(meResponse.user)
@@ -241,8 +242,9 @@ export default function AuthCard({ onLogin, onNeedsRegistration }) {
                           return
                         }
                         const reg = await sdk.registerWithGoogle(response?.credential, tenantKey)
-                        if (reg.ok && reg.token) {
-                          localStorage.setItem('mfa_token', reg.token)
+                        const authToken = reg.token || reg.access_token
+                        if (reg.ok && authToken) {
+                          localStorage.setItem('mfa_token', authToken)
                           const meResponse = await fetchMe()
                           if (meResponse?.user) onLogin(meResponse.user)
                           setRegisterModalOpen(false)

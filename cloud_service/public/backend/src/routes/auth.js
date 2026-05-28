@@ -15,6 +15,9 @@ const BiometricProfile = require('../models/biometricProfile');
 const { encryptBiometric } = require('../utils/crypto');
 
 const PRIVATE_BIOMETRIC_URL = process.env.SDK_URL || 'http://localhost:8000';
+const PRIVATE_LSTM_URL = process.env.PRIVATE_LSTM_URL || process.env.PRIVATE_BIOMETRIC_URL || 'http://localhost:9001';
+const PRIVATE_LSTM_USERNAME = process.env.ML_SERVICE_USERNAME || 'bmfa_user';
+const PRIVATE_LSTM_PASSWORD = process.env.ML_SERVICE_PASSWORD || 'your_secure_password_here';
 
 function getBearerToken(req) {
   const authHeader = req.headers.authorization || '';
@@ -76,6 +79,316 @@ async function verifyIdToken(idToken) {
   return ticket.getPayload();
 }
 
+function buildBasicAuthHeader(username, password) {
+  return `Basic ${Buffer.from(`${username}:${password}`, 'utf8').toString('base64')}`;
+}
+
+function resolveArcLevel(decoded) {
+  return decoded?.arc?.acr || decoded?.arc?.level || decoded?.arc || null;
+}
+
+function toObjectIdString(value) {
+  if (!value) return null;
+  if (typeof value === 'string') return value;
+  if (typeof value.toString === 'function') return value.toString();
+  return String(value);
+}
+
+function buildTenantMembership(tenant, { role = 'user', status = 'active', isPrimary = true, joinedAt = new Date() } = {}) {
+  if (!tenant) return null;
+
+  const tenantId = toObjectIdString(tenant._id || tenant.tenantId || null);
+  const tenantKey = tenant.tenantKey || null;
+
+  if (!tenantId && !tenantKey) return null;
+
+  return {
+    _id: tenantId,
+    key: tenant.companyName || tenant.key || tenantKey || null,
+    tenantId,
+    tenantKey,
+    role,
+    status,
+    isPrimary,
+    joinedAt
+  };
+}
+
+function buildTenantContextDocument(tenant, { role = 'user', status = 'active' } = {}) {
+  const membership = buildTenantMembership(tenant, { role, status, isPrimary: true });
+
+  if (!membership) {
+    return null;
+  }
+
+  return {
+    _id: membership._id,
+    key: membership.key,
+    tenantId: membership.tenantId,
+    tenantKey: membership.tenantKey,
+    memberships: [membership]
+  };
+}
+
+function getTenantMemberships(user) {
+  if (Array.isArray(user?.tenant?.memberships) && user.tenant.memberships.length > 0) {
+    return user.tenant.memberships;
+  }
+
+  const fallbackMembership = buildTenantMembership({
+    _id: user?.tenant?._id || user?.tenantId || null,
+    companyName: user?.tenant?.key || user?.tenantKey || null,
+    tenantKey: user?.tenant?.tenantKey || user?.tenantKey || null
+  }, {
+    role: user?.tenant?.role || user?.role || 'user',
+    status: user?.tenant?.status || user?.status || 'active',
+    isPrimary: true,
+  });
+
+  return fallbackMembership ? [fallbackMembership] : [];
+}
+
+function getBiometricProfileId(user, biometricProfile) {
+  return toObjectIdString(
+    biometricProfile?._id ||
+    user?.biometricTemplate?.biometricProfileId ||
+    user?.biometricProfileId ||
+    user?.biometricTemplate?.biometricProfileId ||
+    user?.biometricTemplate?.profileId ||
+    null
+  );
+}
+
+function getTenantDetails(user) {
+  const memberships = getTenantMemberships(user);
+  const activeMembership = memberships.find((membership) => membership?.isPrimary) || memberships[0] || null;
+  const tenantId = toObjectIdString(activeMembership?._id || activeMembership?.tenantId || user?.tenantId || user?.tenant?._id || user?.tenant?.tenantId || null);
+  const tenantKey = activeMembership?.tenantKey || user?.tenantKey || user?.tenant?.tenantKey || null;
+  const tenantLabel = activeMembership?.key || user?.tenant?.key || tenantKey || null;
+
+  if (!tenantId && !tenantKey && !tenantLabel) {
+    return null;
+  }
+
+  return {
+    _id: tenantId,
+    key: tenantLabel,
+    tenantId,
+    tenantKey,
+    memberships
+  };
+}
+
+function getBiometricTemplateDetails(user, biometricProfile = null) {
+  const biometricProfileId = getBiometricProfileId(user, biometricProfile);
+  const template = user?.biometricTemplate || {};
+
+  if (!biometricProfileId && !template.modelVersion && !template.samplesUsed && !template.enrolledAt && !biometricProfile) {
+    return null;
+  }
+
+  return {
+    biometricProfileId,
+    modelVersion: template.modelVersion || biometricProfile?.modelVersion || null,
+    samplesUsed: template.samplesUsed ?? biometricProfile?.samplesUsed ?? null,
+    enrolledAt: template.enrolledAt || null
+  };
+}
+
+function buildArcUserResponse(user, biometricProfile = null) {
+  const biometricProfileId = getBiometricProfileId(user, biometricProfile);
+  const tenant = getTenantDetails(user);
+  const biometricTemplate = getBiometricTemplateDetails(user, biometricProfile);
+  const tenants = tenant?.memberships || [];
+
+  return {
+    id: toObjectIdString(user?._id),
+    _id: toObjectIdString(user?._id),
+    sub: toObjectIdString(user?._id),
+    googleId: user?.googleId || null,
+    email: user?.email || null,
+    name: user?.name || null,
+    displayName: user?.name || null,
+    role: user?.role || 'user',
+    status: user?.status || null,
+    active: user?.active ?? user?.isActive ?? null,
+    isActive: user?.isActive ?? user?.active ?? null,
+    tenant,
+    tenantId: tenant?._id || toObjectIdString(user?.tenantId),
+    tenantKey: tenant?.tenantKey || user?.tenantKey || null,
+    tenants,
+    biometricProfileId,
+    biometricEnrolled: Boolean(biometricProfileId),
+    biometricTemplate,
+    enrolledAt: biometricTemplate?.enrolledAt || null,
+    modelVersion: biometricTemplate?.modelVersion || null,
+    samplesUsed: biometricTemplate?.samplesUsed ?? null
+  };
+}
+
+function buildArcSessionPayload({ jti, user, arc, amr, source, req, tenantKey = null, tenantId = null, extra = {} }) {
+  const tenant = getTenantDetails(user);
+  return {
+    jti,
+    tokenJti: jti,
+    userId: user._id,
+    clientId: process.env.GOOGLE_CLIENT_ID,
+    acr: arc,
+    amr,
+    tenantId: tenantId || tenant?._id || user.tenantId || null,
+    tenantKey: tenantKey || tenant?.tenantKey || user.tenantKey || null,
+    source,
+    userAgent: req?.headers?.['user-agent'] || null,
+    ip: req?.ip || req?.headers?.['x-forwarded-for'] || req?.socket?.remoteAddress || null,
+    result: extra.result || null,
+    reason: extra.reason || null,
+    confidence: extra.confidence ?? null,
+    distance: extra.distance ?? null,
+    threshold: extra.threshold ?? null,
+    expiresAt: extra.expiresAt
+  };
+}
+
+function getDeviceIdFromRequest(req) {
+  return req?.body?.device?.deviceId || req?.body?.deviceId || req?.headers?.['x-device-id'] || null;
+}
+
+async function resolveTenantContext(user) {
+  const tenant = getTenantDetails(user);
+
+  if (!tenant) {
+    return {
+      tenant: null,
+      tenantId: null,
+      tenantKey: null,
+      issuer: process.env.JWT_ISSUER || process.env.ARC_ISSUER || null,
+    };
+  }
+
+  const tenantRecord = user?.tenant?.tokenSettings
+    ? user.tenant
+    : await Tenant.findOne({
+        $or: [
+          { _id: tenant._id },
+          { tenantKey: tenant.tenantKey },
+        ],
+      }).lean();
+
+  const tenantId = tenantRecord?._id ? toObjectIdString(tenantRecord._id) : tenant._id;
+  const tenantKey = tenantRecord?.tenantKey || tenant.tenantKey || null;
+  const issuer = tenantRecord?.tokenSettings?.issuerName || process.env.JWT_ISSUER || process.env.ARC_ISSUER || (tenantKey ? `https://arc-auth.service/${tenantKey}` : null);
+
+  return {
+    tenant: tenantRecord,
+    tenantId,
+    tenantKey,
+    issuer,
+  };
+}
+
+function buildArcJwtClaims({ user, tenantContext, arcLevel, amr, jti, biometricProfileId = null, deviceId = null }) {
+  const claims = {
+    sub: toObjectIdString(user?._id),
+    email: user?.email || null,
+    role: user?.role || 'user',
+    status: user?.active === false || user?.isActive === false ? 0 : 1,
+    // Keep tenant identity normalized here so tokens stay readable and consistent.
+    tenantId: tenantContext?.tenantKey || tenantContext?.tenantId || user?.tenantKey || toObjectIdString(user?.tenantId),
+    tenantObjectId: tenantContext?.tenantId || toObjectIdString(user?.tenantId) || null,
+    // ARC is always grouped as: acr for level, amr for the authentication methods used.
+    arc: {
+      acr: arcLevel,
+      amr,
+    },
+    // Reuse the JWT id as the session id to make replay/session tracing straightforward.
+    session: {
+      sid: jti,
+    },
+  };
+
+  if (tenantContext?.issuer) {
+    claims.iss = tenantContext.issuer;
+  }
+
+  if (user?.name) {
+    claims.name = user.name;
+  }
+
+  if (biometricProfileId) {
+    claims.biometricProfileId = biometricProfileId;
+  }
+
+  if (deviceId) {
+    claims.device = { deviceId };
+  }
+
+  return claims;
+}
+
+function buildTokenResponse({ token, user, arcSessionId, expiresIn, arc, amr, biometricProfile = null, success = true, status = 'accepted', message = null, meta = null }) {
+  return {
+    success,
+    status,
+    message: message || undefined,
+    access_token: token,
+    token,
+    token_type: 'Bearer',
+    arc,
+    amr,
+    arcSessionId,
+    expires_in: expiresIn,
+    user: buildArcUserResponse(user, biometricProfile),
+    meta: meta || undefined
+  };
+}
+
+function normalizeStepUpSignature(body) {
+  const normalizedSignature = body?.normalized_signature || body?.normalizedSignature || body?.signature || null;
+
+  if (!normalizedSignature || !Array.isArray(normalizedSignature.normalized_stroke)) {
+    const error = new Error('normalized_signature required');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  return {
+    normalized_stroke: normalizedSignature.normalized_stroke,
+    real_length: Number(normalizedSignature.real_length || normalizedSignature.normalized_stroke.length),
+    features: normalizedSignature.features || {
+      real_length: Number(normalizedSignature.real_length || normalizedSignature.normalized_stroke.length)
+    }
+  };
+}
+
+async function callPrivateLstmValidation(normalizedSignature) {
+  const response = await fetch(`${PRIVATE_LSTM_URL}/api/biometric/validate`, {
+    method: 'POST',
+    headers: {
+      'Authorization': buildBasicAuthHeader(PRIVATE_LSTM_USERNAME, PRIVATE_LSTM_PASSWORD),
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify(normalizedSignature)
+  });
+
+  const responseText = await response.text();
+  let payload = {};
+
+  try {
+    payload = responseText ? JSON.parse(responseText) : {};
+  } catch (_) {
+    payload = { error: responseText };
+  }
+
+  if (!response.ok) {
+    const error = new Error(payload.detail || payload.message || 'Private LSTM validation failed');
+    error.statusCode = response.status;
+    error.details = payload;
+    throw error;
+  }
+
+  return payload;
+}
+
 router.post('/google', async (req, res) => {
   try {
     const { id_token, action = 'login' } = req.body;
@@ -96,14 +409,18 @@ router.post('/google', async (req, res) => {
       const Tenant = require('../models/tenant');
       const tenant = await Tenant.findOne({ tenantKey }).lean();
       if (!tenant) return res.status(404).json({ error: 'tenant_not_found', message: 'Tenant not found for tenantKey' });
+      const tenantContextDocument = buildTenantContextDocument(tenant, { role: 'superadmin', status: 'active' });
 
       user = await User.create({
         googleId,
         email,
         name,
         role: 'superadmin',
-        biometricTemplate: null,
+        active: true,
+        status: tenant.status || 'active',
+        tenant: tenantContextDocument,
         tenantId: tenant._id,
+        tenantKey: tenant.tenantKey,
         createdAt: new Date(),
         updatedAt: new Date()
       });
@@ -118,7 +435,7 @@ router.post('/google', async (req, res) => {
       return res.status(404).json({ error: 'needs_registration', message: 'El correo no está registrado. Debes completar el registro primero.' });
     }
 
-    if (!user.tenantId) {
+    if (!(getTenantDetails(user)?._id)) {
       return res.status(403).json({
         error: 'tenant_required',
         message: 'Usuario sin tenant asociado. Debes registrarte con tenantKey o aceptar una invitación válida antes de continuar.'
@@ -129,30 +446,46 @@ router.post('/google', async (req, res) => {
     const privateKey = fs.readFileSync(process.env.JWT_PRIVATE_KEY_PATH, 'utf8');
     const expirationSeconds = parseInt(process.env.JWT_EXPIRATION_SECONDS || '3600', 10);
     const jti = crypto.randomUUID();
+    const tenantContext = await resolveTenantContext(user);
+    const deviceId = getDeviceIdFromRequest(req);
     const token = jwt.sign(
-      {
-        sub: user._id.toString(),
-        email: user.email,
-        name: user.name,
-        tenantId: user.tenantId?.toString() || null
-      },
+      buildArcJwtClaims({
+        user,
+        tenantContext,
+        arcLevel: 'urn:arc:level:0.5',
+        amr: ['federated'],
+        jti,
+        biometricProfileId: getBiometricProfileId(user),
+        deviceId
+      }),
       privateKey,
       { algorithm: 'RS256', expiresIn: expirationSeconds, jwtid: jti }
     );
 
     // Persist arc session
     const amr = payload.amr || [];
-    const arcSession = new ArcSession({
+    const arcSession = new ArcSession(buildArcSessionPayload({
       jti,
-      userId: user._id,
-      clientId: process.env.GOOGLE_CLIENT_ID,
-      acr: payload.acr || null,
+      user,
+      arc: 'urn:arc:level:0.5',
       amr,
-      expiresAt: new Date(Date.now() + expirationSeconds * 1000)
-    });
+      source: 'google-login',
+      req,
+      extra: { expiresAt: new Date(Date.now() + expirationSeconds * 1000) }
+    }));
     await arcSession.save();
 
-    res.json({ token, user, arcSessionId: arcSession._id });
+    res.json({
+      ...buildTokenResponse({
+        token,
+        user,
+        arcSessionId: arcSession._id,
+        expiresIn: expirationSeconds,
+        arc: '0.5',
+        amr: ['federated']
+      }),
+      user: buildArcUserResponse(user)
+    });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'auth_failed', details: err.message });
@@ -206,14 +539,20 @@ router.post('/google/verify-arc-05', async (req, res) => {
       if (invite) {
         // Crear nuevo usuario desde la invitación
         console.log(`[Cloud Service] Usuario en tenant_invites, creando user...`);
+        const tenant = await Tenant.findById(invite.tenantId).lean();
+        const tenantContextDocument = buildTenantContextDocument(tenant || { _id: invite.tenantId, tenantKey: null }, { role: invite.role || 'user', status: 'active' });
         
         user = await User.create({
           googleId,
           email,
           name: name || invite.name || '',
           role: invite.role || 'user',
+          active: true,
+          status: 'active',
+          tenant: tenantContextDocument,
+          tenantId: tenant?._id || invite.tenantId,
+          tenantKey: tenant?.tenantKey || null,
           biometricTemplate: null,
-          tenantId: invite.tenantId,
           createdAt: new Date(),
           updatedAt: new Date()
         });
@@ -230,7 +569,7 @@ router.post('/google/verify-arc-05', async (req, res) => {
       }
     }
 
-    if (!user.tenantId) {
+    if (!getTenantDetails(user)?._id) {
       return res.status(403).json({
         error: 'tenant_required',
         message: 'Usuario sin tenant asociado. Debes registrarte con tenantKey o aceptar una invitación válida antes del enrolamiento.'
@@ -264,18 +603,31 @@ router.post('/google/verify-arc-05', async (req, res) => {
     );
 
     // Paso 4: Guardar sesión ARC
-    const arcSession = new ArcSession({
+    const arcSession = new ArcSession(buildArcSessionPayload({
       jti,
-      userId: user._id,
-      clientId: process.env.GOOGLE_CLIENT_ID,
-      acr: 'urn:arc:level:0.5',
+      user,
+      arc: 'urn:arc:level:0.5',
       amr: ['federated'],
-      expiresAt: new Date(Date.now() + expirationSeconds * 1000)
-    });
+      source: 'google-verify-arc-05',
+      req,
+      extra: { expiresAt: new Date(Date.now() + expirationSeconds * 1000) }
+    }));
     await arcSession.save();
 
     console.log(`[Cloud Service] ✓ ARC 0.5 token generado para ${user.email}`);
-
+                tenant: tenant
+                  ? {
+                    _id: tenant._id,
+                    key: tenant.tenantKey,
+                    tenantId: tenant._id,
+                    tenantKey: tenant.tenantKey
+                  }
+                  : {
+                    _id: null,
+                    key: null,
+                    tenantId: null,
+                    tenantKey: null
+                  },
     // Paso 5: Retornar a SDK
     res.status(200).json({
       success: true,
@@ -283,13 +635,7 @@ router.post('/google/verify-arc-05', async (req, res) => {
       token_type: 'Bearer',
       arc: '0.5',
       amr: ['federated'],
-      user: {
-        sub: user._id.toString(),
-        email: user.email,
-        name: user.name,
-        role: user.role,
-        biometricEnrolled: Boolean(user.biometricTemplate?.biometricProfileId)
-      },
+      user: buildArcUserResponse(user),
       arcSessionId: arcSession._id,
       expires_in: expirationSeconds
     });
@@ -349,13 +695,19 @@ router.post('/google/verify-access', async (req, res) => {
       }).lean();
 
       if (invite) {
+        const tenant = await Tenant.findById(invite.tenantId).lean();
+        const tenantContextDocument = buildTenantContextDocument(tenant || { _id: invite.tenantId, tenantKey: null }, { role: invite.role || 'user', status: 'active' });
         user = await User.create({
           googleId,
           email,
           name: name || invite.name || '',
           role: invite.role || 'user',
+          active: true,
+          status: 'active',
+          tenant: tenantContextDocument,
+          tenantId: tenant?._id || invite.tenantId,
+          tenantKey: tenant?.tenantKey || null,
           biometricTemplate: null,
-          tenantId: invite.tenantId,
           createdAt: new Date(),
           updatedAt: new Date()
         });
@@ -366,7 +718,7 @@ router.post('/google/verify-access', async (req, res) => {
       }
     }
 
-    if (!user.tenantId) {
+    if (!(getTenantDetails(user)?._id)) {
       return res.status(403).json({
         error: 'tenant_required',
         message: 'Usuario sin tenant asociado. Debes registrarte con tenantKey o aceptar una invitación válida antes del enrolamiento.'
@@ -377,15 +729,21 @@ router.post('/google/verify-access', async (req, res) => {
     const privateKey = fs.readFileSync(process.env.JWT_PRIVATE_KEY_PATH, 'utf8');
     const expirationSeconds = parseInt(process.env.JWT_EXPIRATION_SECONDS || '3600', 10);
     const jti = crypto.randomUUID();
+    const tenantContext = await resolveTenantContext(user);
+    const deviceId = getDeviceIdFromRequest(req);
 
-    const arcToken = jwt.sign({
-      sub: user._id.toString(),
-      email: user.email,
-      name: user.name,
-      role: user.role,
-      tenantId: user.tenantId?.toString(),
-      arc: { acr: 'urn:arc:level:0.5', amr: ['federated'] }
-    }, privateKey, { algorithm: 'RS256', expiresIn: expirationSeconds, jwtid: jti });
+    const arcToken = jwt.sign(
+      buildArcJwtClaims({
+        user,
+        tenantContext,
+        arcLevel: 'urn:arc:level:0.5',
+        amr: ['federated'],
+        jti,
+        deviceId
+      }),
+      privateKey,
+      { algorithm: 'RS256', expiresIn: expirationSeconds, jwtid: jti }
+    );
 
     const arcSession = new ArcSession({ jti, userId: user._id, clientId: process.env.GOOGLE_CLIENT_ID, acr: 'urn:arc:level:0.5', amr: ['federated'], expiresAt: new Date(Date.now() + expirationSeconds * 1000) });
     await arcSession.save();
@@ -421,7 +779,19 @@ router.post('/google/verify-access', async (req, res) => {
  *   "success": true,
  *   "access_token": "arc_0.5_token",
  *   "arc": "0.5",
- *   "amr": ["federated"],
+                tenant: await Tenant.findById(invite.tenantId).lean()
+                  ? {
+                    _id: tenant._id,
+                    key: tenant.tenantKey,
+                    tenantId: tenant._id,
+                    tenantKey: tenant.tenantKey
+                  }
+                  : {
+                    _id: invite.tenantId,
+                    key: null,
+                    tenantId: invite.tenantId,
+                    tenantKey: null
+                  },
  *   "user": {...},
  *   "arcSessionId": "..."
  * }
@@ -454,7 +824,6 @@ router.post('/google/exchange', async (req, res) => {
       body: tokenBody.toString()
     });
 
-    const tokenJson = await tokenRes.json().catch(() => ({}));
 
     if (!tokenRes.ok) {
       return res.status(400).json({
@@ -495,18 +864,24 @@ router.post('/google/exchange', async (req, res) => {
       if (invite) {
         // Crear nuevo usuario desde la invitación
         console.log(`[Cloud Service] Usuario en tenant_invites, creando user...`);
-        
+        const tenant = await Tenant.findById(invite.tenantId).lean();
+        const tenantContextDocument = buildTenantContextDocument(tenant || { _id: invite.tenantId, tenantKey: null }, { role: invite.role || 'user', status: 'active' });
+
         user = await User.create({
           googleId,
           email,
           name: name || invite.name || '',
           role: invite.role || 'user',
+          active: true,
+          status: 'active',
+          tenant: tenantContextDocument,
+          tenantId: tenant?._id || invite.tenantId,
+          tenantKey: tenant?.tenantKey || null,
           biometricTemplate: null,
-          tenantId: invite.tenantId,
           createdAt: new Date(),
           updatedAt: new Date()
         });
-        
+
         user = user.toObject();
 
         console.log(`[Cloud Service] ✓ Usuario creado desde invitación`);
@@ -523,19 +898,18 @@ router.post('/google/exchange', async (req, res) => {
     const privateKey = fs.readFileSync(process.env.JWT_PRIVATE_KEY_PATH, 'utf8');
     const expirationSeconds = parseInt(process.env.JWT_EXPIRATION_SECONDS || '3600', 10);
     const jti = crypto.randomUUID();
-
+    const tenantContext = await resolveTenantContext(user);
+    const deviceId = getDeviceIdFromRequest(req);
     const arcToken = jwt.sign(
-      {
-        sub: user._id.toString(),
-        email: user.email,
-        name: user.name,
-        role: user.role,
-        tenantId: user.tenantId?.toString(),
-        arc: {
-          acr: 'urn:arc:level:0.5',
-          amr: ['federated']  // Google
-        }
-      },
+      buildArcJwtClaims({
+        user,
+        tenantContext,
+        arcLevel: 'urn:arc:level:0.5',
+        amr: ['federated'],
+        jti,
+        biometricProfileId: getBiometricProfileId(user),
+        deviceId
+      }),
       privateKey,
       {
         algorithm: 'RS256',
@@ -643,10 +1017,11 @@ router.post('/enroll', async (req, res) => {
       return res.status(404).json({ error: 'user_not_found', message: 'No se encontró el usuario autenticado' });
     }
 
+    const decodedTenantObjectId = decoded.tenantObjectId || (decoded.tenantId && mongoose.Types.ObjectId.isValid(decoded.tenantId) ? decoded.tenantId : null);
     const tenantObjectId = user.tenantId
       ? new mongoose.Types.ObjectId(user.tenantId)
-      : (decoded.tenantId && mongoose.Types.ObjectId.isValid(decoded.tenantId)
-          ? new mongoose.Types.ObjectId(decoded.tenantId)
+      : (decodedTenantObjectId
+          ? new mongoose.Types.ObjectId(decodedTenantObjectId)
           : null);
 
     if (!tenantObjectId) {
@@ -720,25 +1095,39 @@ router.post('/enroll', async (req, res) => {
       }
     );
 
-    const arcSession = new ArcSession({
+    const arcSession = new ArcSession(buildArcSessionPayload({
       jti,
-      userId: user._id,
-      clientId: process.env.GOOGLE_CLIENT_ID,
-      acr: 'urn:arc:level:1.0',
+      user,
+      arc: 'urn:arc:level:1.0',
       amr: ['federated', 'biometric'],
-      expiresAt: new Date(Date.now() + expirationSeconds * 1000)
-    });
+      source: 'enroll',
+      req,
+      tenantId: user.tenantId || null,
+      tenantKey: user.tenantKey || null,
+      extra: {
+        result: 'accepted',
+        reason: 'biometric_profile_created',
+        confidence: null,
+        distance: null,
+        threshold: null,
+        expiresAt: new Date(Date.now() + expirationSeconds * 1000)
+      }
+    }));
     await arcSession.save();
 
     return res.status(201).json({
-      success: true,
-      message: 'Biometric profile stored successfully',
-      access_token: finalToken,
-      token_type: 'Bearer',
-      arc: '1.0',
-      amr: ['federated', 'biometric'],
-      arcSessionId: arcSession._id,
-      expires_in: expirationSeconds,
+      ...buildTokenResponse({
+        token: finalToken,
+        user,
+        arcSessionId: arcSession._id,
+        expiresIn: expirationSeconds,
+        arc: '1.0',
+        amr: ['federated', 'biometric'],
+        biometricProfile: profile,
+        status: 'accepted',
+        message: 'Biometric profile stored successfully',
+        meta: null
+      }),
       biometricProfile: {
         id: profile._id.toString(),
         userId: profile.userId,
@@ -748,15 +1137,7 @@ router.post('/enroll', async (req, res) => {
         createdAt: profile.createdAt,
         updatedAt: profile.updatedAt
       },
-      user: {
-        _id: user._id.toString(),
-        googleId: user.googleId,
-        email: user.email,
-        name: user.name,
-        role: user.role,
-        biometricTemplate: user.biometricTemplate,
-        tenantId: user.tenantId ? user.tenantId.toString() : null
-      }
+      user: buildArcUserResponse(user, profile)
     });
   } catch (err) {
     console.error('[Cloud Service] Error en /auth/enroll:', err);
@@ -770,6 +1151,150 @@ router.post('/enroll', async (req, res) => {
   }
 });
 
+router.post('/step-up', async (req, res) => {
+  try {
+    const token = getBearerToken(req);
+    if (!token) {
+      return res.status(401).json({ error: 'Token requerido' });
+    }
+
+    const normalizedSignature = normalizeStepUpSignature(req.body);
+
+    let decoded;
+    try {
+      decoded = verifyArc05Token(token);
+    } catch (err) {
+      console.error('[Cloud Service] ARC 0.5 verification failed:', err.message);
+      return res.status(401).json({ error: 'Token inválido', details: err.message });
+    }
+
+    const arcLevel = resolveArcLevel(decoded);
+    const allowedArcLevels = new Set([
+      'urn:arc:level:0.5',
+      '0.5',
+      '0.5.0',
+      'urn:arc:level:0',
+      '0',
+      '0.0'
+    ]);
+
+    if (!allowedArcLevels.has(String(arcLevel))) {
+      return res.status(403).json({
+        error: 'insufficient_arc',
+        message: 'Se requiere un token ARC 0.5 válido para el step-up biométrico'
+      });
+    }
+
+    const user = await User.findById(decoded.sub).lean();
+    if (!user) {
+      return res.status(404).json({ error: 'user_not_found', message: 'No se encontró el usuario autenticado' });
+    }
+
+    const biometricProfile = await BiometricProfile.findOne({ userId: user._id.toString() }).lean();
+    if (!biometricProfile) {
+      return res.status(404).json({
+        error: 'biometric_profile_not_found',
+        message: 'El usuario no tiene perfil biométrico registrado'
+      });
+    }
+
+    const privateResult = await callPrivateLstmValidation(normalizedSignature);
+
+    if (!privateResult.is_valid) {
+      return res.status(401).json({
+        success: false,
+        status: 'rejected',
+        error: 'biometric_rejected',
+        message: privateResult.message || 'Firma biométrica no reconocida',
+        meta: {
+          confidence: privateResult.confidence || null,
+          details: privateResult.details || null
+        }
+      });
+    }
+
+    const privateKey = fs.readFileSync(process.env.JWT_PRIVATE_KEY_PATH, 'utf8');
+    const expirationSeconds = parseInt(process.env.JWT_EXPIRATION_SECONDS || '3600', 10);
+    const jti = crypto.randomUUID();
+    const tenantContext = await resolveTenantContext(user);
+    const deviceId = getDeviceIdFromRequest(req);
+    const finalToken = jwt.sign(
+      buildArcJwtClaims({
+        user,
+        tenantContext,
+        arcLevel: 'urn:arc:level:1.0',
+        amr: ['federated', 'biometric'],
+        jti,
+        biometricProfileId: biometricProfile._id.toString(),
+        deviceId
+      }),
+      privateKey,
+      {
+        algorithm: 'RS256',
+        expiresIn: expirationSeconds,
+        jwtid: jti
+      }
+    );
+
+    const arcSession = new ArcSession(buildArcSessionPayload({
+      jti,
+      user,
+      arc: 'urn:arc:level:1.0',
+      amr: ['federated', 'biometric'],
+      source: 'step-up',
+      req,
+      tenantId: user.tenantId || null,
+      tenantKey: user.tenantKey || null,
+      extra: {
+        result: 'accepted',
+        reason: privateResult.message || null,
+        confidence: privateResult.confidence || null,
+        distance: privateResult.distance || null,
+        threshold: privateResult.threshold || null,
+        expiresAt: new Date(Date.now() + expirationSeconds * 1000)
+      }
+    }));
+    await arcSession.save();
+
+    return res.status(200).json({
+      ...buildTokenResponse({
+        token: finalToken,
+        user,
+        arcSessionId: arcSession._id,
+        expiresIn: expirationSeconds,
+        arc: '1.0',
+        amr: ['federated', 'biometric'],
+        biometricProfile,
+        status: 'accepted',
+        meta: {
+          confidence: privateResult.confidence || null,
+          decision: privateResult.is_valid ? 'accept' : 'reject',
+          reason: privateResult.message || null,
+          lstmSignature: privateResult.lstmSignature || null
+        }
+      }),
+      meta: {
+        confidence: privateResult.confidence || null,
+        decision: privateResult.is_valid ? 'accept' : 'reject',
+        reason: privateResult.message || null,
+        lstmSignature: privateResult.lstmSignature || null
+      }
+    });
+  } catch (err) {
+    console.error('[Cloud Service] Error en /auth/step-up:', err);
+    if (err.statusCode) {
+      return res.status(err.statusCode).json({
+        error: err.message,
+        details: err.details || undefined
+      });
+    }
+    return res.status(500).json({
+      error: 'step_up_failed',
+      message: err.message || 'Biometric step-up failed'
+    });
+  }
+});
+
 // Protected endpoint to get current user based on server JWT
 router.get('/me', authenticate, async (req, res) => {
   try {
@@ -779,13 +1304,7 @@ router.get('/me', authenticate, async (req, res) => {
     if (!user) return res.status(404).json({ error: 'user_not_found' });
 
     res.json({
-      user: {
-        ...user,
-        _id: user._id?.toString?.() || user._id,
-        tenantId: user.tenantId?.toString?.() || null,
-        biometricTemplate: user.biometricTemplate ?? null,
-        biometricEnrolled: Boolean(user.biometricTemplate?.biometricProfileId)
-      }
+      user: buildArcUserResponse(user)
     });
   } catch (err) {
     console.error(err);
@@ -807,7 +1326,8 @@ router.get('/users', authenticate, async (req, res) => {
       return res.status(403).json({ error: 'forbidden', message: 'Solo el superadmin puede listar usuarios' });
     }
 
-    const tenantFilter = req.query.tenantId || currentUser.tenantId;
+    const primaryTenant = getTenantDetails(currentUser);
+    const tenantFilter = req.query.tenantId || primaryTenant?._id || currentUser.tenantId || null;
     if (!tenantFilter) {
       return res.status(400).json({ error: 'tenant_required', message: 'No se pudo resolver el tenant activo' });
     }
@@ -818,16 +1338,15 @@ router.get('/users', authenticate, async (req, res) => {
 
     const tenantObjectId = new mongoose.Types.ObjectId(tenantFilter);
     const users = await User.aggregate([
-      { $match: { tenantId: tenantObjectId } },
       {
-        $lookup: {
-          from: Tenant.collection.name,
-          localField: 'tenantId',
-          foreignField: '_id',
-          as: 'tenant'
+        $match: {
+          $or: [
+            { tenantId: tenantObjectId },
+            { 'tenant.tenantId': tenantObjectId },
+            { 'tenant.memberships.tenantId': tenantObjectId }
+          ]
         }
       },
-      { $unwind: { path: '$tenant', preserveNullAndEmptyArrays: true } },
       {
         $lookup: {
           from: ArcSession.collection.name,
@@ -855,7 +1374,6 @@ router.get('/users', authenticate, async (req, res) => {
       {
         $project: {
           googleId: 0,
-          biometricTemplate: 0,
           __v: 0
         }
       },

@@ -44,6 +44,13 @@ class Settings:
     SDK_API_KEY: str = os.getenv("SDK_API_KEY", "sdk_default_key")
     SDK_SECRET: str = os.getenv("SDK_SECRET", "sdk_default_secret")
 
+    # ========== PUBLIC GATEWAY STEP-UP ==========
+    PUBLIC_GATEWAY_STEP_UP_ENDPOINT: str = os.getenv(
+        "PUBLIC_GATEWAY_STEP_UP_ENDPOINT",
+        "http://localhost:4003/step-up"
+    )
+    PUBLIC_GATEWAY_TIMEOUT: int = int(os.getenv("PUBLIC_GATEWAY_TIMEOUT", "30"))
+
     # ========== BIOMETRIC NORMALIZATION ==========
     MIN_STROKE_POINTS: int = int(os.getenv("MIN_STROKE_POINTS", "100"))
     MAX_STROKE_POINTS: int = int(os.getenv("MAX_STROKE_POINTS", "1200"))

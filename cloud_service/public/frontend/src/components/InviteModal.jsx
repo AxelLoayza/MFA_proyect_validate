@@ -9,6 +9,8 @@ export default function InviteModal({ open, onClose, tenantOptions = [] }) {
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState('')
 
+  const selectableTenants = tenantOptions.filter((tenant) => tenant?._id || tenant?.tenantKey)
+
   useEffect(() => {
     if (!open || typeof document === 'undefined') return undefined
 
@@ -103,7 +105,7 @@ export default function InviteModal({ open, onClose, tenantOptions = [] }) {
                 onChange={(e) => setForm({ ...form, tenantKey: e.target.value })}
               >
                 <option value="">Selecciona organización</option>
-                {tenantOptions.map((t) => <option key={t.tenantKey} value={t.tenantKey}>{t.companyName || t.tenantKey}</option>)}
+                  {selectableTenants.map((t) => <option key={t._id || t.tenantKey} value={t.tenantKey || t._id}>{t.companyName || t.tenantKey}</option>)}
               </select>
             </div>
 
@@ -147,7 +149,7 @@ export default function InviteModal({ open, onClose, tenantOptions = [] }) {
         </aside>
         <div className="invite-modal-card__footer">
           <button type="button" className="shadcn-btn ghost invite-modal-card__secondary" onClick={onClose}>Cerrar</button>
-          <button type="button" className="shadcn-btn primary invite-modal-card__primary" onClick={submit} disabled={busy || !form.email || !form.tenantKey}>{busy ? 'Enviando...' : 'Generar y enviar'}</button>
+          <button type="button" className="shadcn-btn primary invite-modal-card__primary" onClick={submit} disabled={busy || !form.email || !form.tenantKey || selectableTenants.length === 0}>{busy ? 'Enviando...' : 'Generar y enviar'}</button>
         </div>
       </div>
     </div>,

@@ -46,7 +46,7 @@ def _raise_cloud_error(response: requests.Response, prefix: str) -> None:
     raise CloudServiceError(response.status_code, message, payload)
 
 
-async def verify_google_token(id_token: str) -> Dict[str, Any]:
+async def verify_google_token(id_token: str, action: str = "login", tenant_key: Optional[str] = None) -> Dict[str, Any]:
     """
     Verifica Google id_token con Cloud Service
     
@@ -75,8 +75,12 @@ async def verify_google_token(id_token: str) -> Dict[str, Any]:
         
         # Preparar payload
         payload = {
-            "id_token": id_token
+            "id_token": id_token,
+            "action": action or "login",
         }
+
+        if tenant_key:
+            payload["tenantKey"] = tenant_key
         
         # Headers con SDK Key
         headers = {
@@ -85,7 +89,7 @@ async def verify_google_token(id_token: str) -> Dict[str, Any]:
         }
         
         # URL del endpoint en Cloud Service
-        cloud_endpoint = f"{CLOUD_SERVICE_URL}/auth/google/verify-arc-05"
+        cloud_endpoint = f"{CLOUD_SERVICE_URL}/auth/google"
         
         logger.info(f"[SDK Google] POST a {cloud_endpoint}")
         
@@ -219,7 +223,7 @@ async def exchange_google_code(code: str, redirect_uri: str = None) -> Dict[str,
         raise
 
 
-async def verify_google_access(access_token: str) -> Dict[str, Any]:
+async def verify_google_access(access_token: str, action: str = "login", tenant_key: Optional[str] = None) -> Dict[str, Any]:
     """
     Verifica Google access_token con Cloud Service (cuando no hay id_token disponible)
     """
@@ -229,7 +233,13 @@ async def verify_google_access(access_token: str) -> Dict[str, Any]:
         if not access_token:
             raise Exception('Google access_token requerido')
 
-        payload = {"access_token": access_token}
+        payload = {
+            "access_token": access_token,
+            "action": action or "login",
+        }
+
+        if tenant_key:
+            payload["tenantKey"] = tenant_key
 
         headers = {"X-SDK-Key": SDK_API_KEY, "Content-Type": "application/json"}
         cloud_endpoint = f"{CLOUD_SERVICE_URL}/auth/google/verify-access"

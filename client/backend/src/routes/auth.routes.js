@@ -11,6 +11,7 @@ router.get('/google/start', authController.googleStart);
 
 // Google OAuth - Verificar id_token y obtener ARC 0.5
 router.post('/google/verify', authController.googleVerify);
+router.post('/google/register', authController.googleRegister);
 
 // Ruta de enrolamiento delegada a Cloud Service
 router.post('/enroll', authController.enrollBiometric);

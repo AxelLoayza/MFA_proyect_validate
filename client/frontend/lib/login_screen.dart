@@ -200,7 +200,19 @@ class _LoginScreenState extends State<LoginScreen> {
             _statusMessage = 'Tu cuenta requiere registro inicial con codigo de invitacion.';
             _isLoading = false;
           });
-          await _showRegistrationRequiredDialog(errorMessage);
+
+          final tenantKey = await _showRegistrationRequiredDialog(errorMessage);
+          if (tenantKey != null && tenantKey.trim().isNotEmpty) {
+            final registered = await _registerWithGoogle(
+              tenantKey: tenantKey.trim(),
+              idToken: idToken,
+              accessToken: accessToken,
+            );
+
+            if (registered && _accessToken != null) {
+              await _continueToNextStepAfterLogin();
+            }
+          }
           return;
         }
 
@@ -350,24 +362,119 @@ class _LoginScreenState extends State<LoginScreen> {
     );
   }
 
-  Future<void> _showRegistrationRequiredDialog(String message) async {
-    if (!mounted) return;
+  Future<bool> _registerWithGoogle({
+    required String tenantKey,
+    String? idToken,
+    String? accessToken,
+  }) async {
+    setState(() {
+      _isLoading = true;
+      _statusMessage = 'Registrando cuenta con tenantKey...';
+    });
 
-    await showDialog<void>(
+    try {
+      final requestBody = <String, dynamic>{
+        'tenantKey': tenantKey,
+      };
+
+      if (idToken != null && idToken.isNotEmpty) {
+        requestBody['id_token'] = idToken;
+      } else if (accessToken != null && accessToken.isNotEmpty) {
+        requestBody['access_token'] = accessToken;
+      } else {
+        throw Exception('No hay token de Google disponible para registrar');
+      }
+
+      final response = await http.post(
+        Uri.parse('$_backendUrl/api/auth/google/register'),
+        headers: const {'Content-Type': 'application/json'},
+        body: jsonEncode(requestBody),
+      );
+
+      final responseJson = jsonDecode(response.body) as Map<String, dynamic>;
+      if (response.statusCode != 200) {
+        throw Exception(responseJson['message']?.toString() ?? responseJson['error']?.toString() ?? 'Registro fallido');
+      }
+
+      final user = (responseJson['user'] as Map?)?.cast<String, dynamic>() ?? const {};
+      final sessionToken = responseJson['access_token']?.toString();
+
+      setState(() {
+        _accessToken = sessionToken;
+        _arc = responseJson['arc']?.toString();
+        _email = user['email']?.toString() ?? _email;
+        _name = user['name']?.toString() ?? _name;
+        _biometricEnrolled = user['biometricEnrolled'] == true;
+        _statusMessage = 'Registro completado. Sesión ARC ${_arc ?? '0.5'} activa.';
+      });
+
+      if (sessionToken != null && sessionToken.isNotEmpty) {
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString('mfa_token', sessionToken);
+      }
+
+      if (mounted) {
+        _showMessage('✓ Registro inicial completado con tenant autorizado.');
+      }
+
+      return true;
+    } catch (e) {
+      if (mounted) {
+        _showMessage('Error en registro: ${e.toString()}');
+      }
+      setState(() {
+        _statusMessage = 'Error de registro: $e';
+      });
+      return false;
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+      }
+    }
+  }
+
+  Future<String?> _showRegistrationRequiredDialog(String message) async {
+    if (!mounted) return null;
+
+    final tenantController = TextEditingController();
+
+    final result = await showDialog<String>(
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Registro requerido'),
-        content: Text(
-          '$message\n\nSolicita a tu administrador un codigo de invitacion activo para completar el registro inicial.',
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              '$message\n\nSolicita a tu administrador el tenantKey autorizado para completar el registro inicial.',
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: tenantController,
+              decoration: const InputDecoration(
+                labelText: 'Tenant Key',
+                hintText: 'tenant_alfa',
+              ),
+            ),
+          ],
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('Entendido'),
+            onPressed: () => Navigator.of(context).pop(null),
+            child: const Text('Cancelar'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.of(context).pop(tenantController.text),
+            child: const Text('Registrar'),
           ),
         ],
       ),
     );
+
+    return result;
   }
 
   @override

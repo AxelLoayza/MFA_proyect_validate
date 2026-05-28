@@ -25,7 +25,7 @@ const SDK_SECRET = process.env.SDK_SECRET || 'sdk_default_secret';
  * @param {string} idToken - Google id_token de Flutter
  * @returns {Object} - { access_token, arc, user, ... }
  */
-async function verifyGoogleToken(idTokenOrAccessToken, tokenType = 'id_token') {
+async function verifyGoogleToken(idTokenOrAccessToken, tokenType = 'id_token', options = {}) {
   try {
     logger.info('[Google Service] Iniciando verificación de Google token');
     
@@ -47,6 +47,14 @@ async function verifyGoogleToken(idTokenOrAccessToken, tokenType = 'id_token') {
     const payload = tokenType === 'id_token'
       ? { id_token: idTokenOrAccessToken }
       : { access_token: idTokenOrAccessToken };
+
+    if (options.action) {
+      payload.action = options.action;
+    }
+
+    if (options.tenantKey) {
+      payload.tenantKey = options.tenantKey;
+    }
 
     const response = await axios.post(
       `${SDK_URL}/auth/google/verify`,
@@ -108,6 +116,23 @@ async function verifyGoogleToken(idTokenOrAccessToken, tokenType = 'id_token') {
     
     throw error;
   }
+}
+
+/**
+ * Flujo de registro con Google: reusa verificación delegada al SDK,
+ * pero fuerza action=register y tenantKey para que Cloud Service cree el usuario.
+ */
+async function registerGoogleToken(idTokenOrAccessToken, tenantKey, tokenType = 'id_token') {
+  if (!tenantKey) {
+    const error = new Error('tenantKey requerido para registro');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  return verifyGoogleToken(idTokenOrAccessToken, tokenType, {
+    action: 'register',
+    tenantKey,
+  });
 }
 
 /**
@@ -210,5 +235,6 @@ async function exchangeGoogleCode(code, redirectUri = null) {
 
 module.exports = {
   verifyGoogleToken,
-  exchangeGoogleCode
+  exchangeGoogleCode,
+  registerGoogleToken,
 };

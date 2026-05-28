@@ -6,6 +6,7 @@
   "scripts": {
     "start": "node src/server.js",
     "dev": "nodemon --watch src --exec node src/server.js",
+    "migrate": "node src/scripts/migrate.js",
     "migrate:login-sessions": "node src/scripts/ensure_login_sessions_google.js"
   },
   "keywords": [],
@@ -21,7 +22,6 @@
     "helmet": "^8.1.0",
     "jose": "^6.1.0",
     "jsonwebtoken": "^9.0.3",
-    "mongoose": "^9.6.2",
     "morgan": "^1.10.1",
     "pg": "^8.16.3",
     "uuid": "^13.0.0",

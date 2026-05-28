@@ -17,11 +17,12 @@ Protecciones:
   - Request size limit: 100 KB max
   - Points limit: 100-1200 puntos
 """
-from fastapi import APIRouter, HTTPException, status, Depends, Request
+from fastapi import APIRouter, HTTPException, status, Depends, Request, Header
 import logging
 from .models import NormalizationRequest, NormalizationResponse, EnrollmentRequest, EnrollmentResponse
 from .normalizer import normalize_stroke
 from .cloud_service import send_to_ml_service, send_enrollment_to_ml_service
+from .backend_service import forward_step_up_to_public_gateway
 from .rate_limiter import rate_limit_dependency
 
 logger = logging.getLogger(__name__)
@@ -137,6 +138,43 @@ async def enroll_biometric_master(request: EnrollmentRequest) -> EnrollmentRespo
             detail=f"Internal error formatting enrollment signatures: {str(e)}"
         )
 
+
+@router.post("/auth/step-up", dependencies=[Depends(rate_limit_dependency)])
+async def step_up_signature_login(
+    request: NormalizationRequest,
+    authorization: str = Header(...),
+    tenant_key: str | None = Header(default=None, alias="X-Tenant-Key"),
+    tenant_id: str | None = Header(default=None, alias="X-Tenant-Id"),
+) -> dict:
+    """
+    Step-up ARC 0.5 -> ARC 1.0.
+
+    Recibe la firma cruda desde Flutter, la normaliza y la reenvía al
+    public gateway para la evaluación biométrica y emisión del token final.
+    """
+    try:
+        normalized_points, features = normalize_stroke(request)
+        normalized_signature = {
+            "normalized_stroke": [{"x": p.x, "y": p.y, "t": p.t, "p": p.p} for p in normalized_points],
+            "real_length": features.get("real_length"),
+            "features": features,
+        }
+
+        return forward_step_up_to_public_gateway(
+            normalized_signature=normalized_signature,
+            authorization=authorization,
+            tenant_key=tenant_key,
+            tenant_id=tenant_id,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Step-up normalization error: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Step-up normalization error: {str(e)}"
+        )
+
 @router.get("/health")
 async def health_check() -> dict:
     """Health check endpoint - verifica que el servicio está corriendo"""
@@ -173,6 +211,8 @@ async def verify_google(request: dict) -> dict:
     try:
         id_token = request.get("id_token")
         access_token = request.get("access_token")
+        action = request.get("action", "login")
+        tenant_key = request.get("tenantKey")
 
         if not id_token and not access_token:
             raise HTTPException(
@@ -186,10 +226,10 @@ async def verify_google(request: dict) -> dict:
         from .google_service import verify_google_token, verify_google_access, CloudServiceError
 
         if id_token:
-            result = await verify_google_token(id_token)
+            result = await verify_google_token(id_token, action=action, tenant_key=tenant_key)
         else:
             # access_token flow
-            result = await verify_google_access(access_token)
+            result = await verify_google_access(access_token, action=action, tenant_key=tenant_key)
         
         logger.info(f"[API Routes] ✓ Google token verificado, ARC {result['arc']}")
         

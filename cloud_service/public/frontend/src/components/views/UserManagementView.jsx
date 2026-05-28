@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import InviteModal from '../InviteModal'
-import { getManagedUsers, getTenants } from '../../sdk'
+import { getManagedUsers } from '../../sdk'
 
 function formatDate(value) {
   if (!value) return 'Sin sesiones'
@@ -16,57 +16,37 @@ function formatDate(value) {
 
 export default function UserManagementView({ user }) {
   const [modalOpen, setModalOpen] = useState(false)
-  const [tenantOptions, setTenantOptions] = useState([])
   const [users, setUsers] = useState([])
   const [search, setSearch] = useState('')
-  const [selectedTenant, setSelectedTenant] = useState(user?.tenantId || '')
+  const [selectedTenant, setSelectedTenant] = useState('')
   const [loadingUsers, setLoadingUsers] = useState(false)
-  const [loadingTenants, setLoadingTenants] = useState(false)
   const [errorMessage, setErrorMessage] = useState('')
 
-  useEffect(() => {
-    if (user?.tenantId) {
-      setSelectedTenant(user.tenantId)
-    }
-  }, [user?.tenantId])
+  const tenantOptions = useMemo(() => {
+    const memberships = user?.tenant?.memberships || user?.tenants || []
+
+    return memberships
+      .map((membership) => ({
+        _id: membership?._id || membership?.tenantId || null,
+        tenantKey: membership?.tenantKey || null,
+        companyName: membership?.key || membership?.companyName || membership?.tenantKey || 'Tenant',
+        role: membership?.role || user?.role || 'user',
+        isPrimary: Boolean(membership?.isPrimary)
+      }))
+      .filter((membership) => membership._id || membership.tenantKey)
+  }, [user])
+
+  const selectedTenantLabel = useMemo(() => {
+    const currentTenant = tenantOptions.find((item) => item._id === selectedTenant || item.tenantKey === selectedTenant)
+    return currentTenant?.companyName || currentTenant?.tenantKey || 'Tenant activo'
+  }, [selectedTenant, tenantOptions])
 
   useEffect(() => {
-    let isMounted = true
-
-    async function loadTenants() {
-      setLoadingTenants(true)
-      try {
-        const data = await getTenants()
-        if (!isMounted) return
-
-        if (Array.isArray(data)) {
-          setTenantOptions(data)
-        } else if (Array.isArray(data?.tenants)) {
-          setTenantOptions(data.tenants)
-        } else {
-          setTenantOptions([])
-        }
-
-        if (!selectedTenant) {
-          const firstTenant = Array.isArray(data?.tenants) && data.tenants.length > 0 ? data.tenants[0] : null
-          const nextTenantId = firstTenant?._id || firstTenant?.tenantKey || ''
-          if (nextTenantId) {
-            setSelectedTenant(nextTenantId)
-          }
-        }
-      } catch (_) {
-        if (isMounted) setTenantOptions([])
-      } finally {
-        if (isMounted) setLoadingTenants(false)
-      }
+    const nextPrimaryTenant = tenantOptions.find((item) => item.isPrimary)?._id || tenantOptions[0]?._id || tenantOptions[0]?.tenantKey || ''
+    if (nextPrimaryTenant) {
+      setSelectedTenant(nextPrimaryTenant)
     }
-
-    loadTenants()
-
-    return () => {
-      isMounted = false
-    }
-  }, [])
+  }, [tenantOptions])
 
   useEffect(() => {
     let isMounted = true
@@ -114,11 +94,6 @@ export default function UserManagementView({ user }) {
     })
   }, [search, users])
 
-  const tenantLabel = useMemo(() => {
-    const currentTenant = tenantOptions.find((item) => item._id === selectedTenant || item.tenantKey === selectedTenant)
-    return currentTenant?.companyName || currentTenant?.tenantKey || 'Todos los tenants'
-  }, [selectedTenant, tenantOptions])
-
   return (
     <div className="view-card shadcn-card view-card--users">
       <h2 className="view-card__title">Gestión de usuarios</h2>
@@ -136,7 +111,6 @@ export default function UserManagementView({ user }) {
             className="select shadcn-input"
             value={selectedTenant}
             onChange={(event) => setSelectedTenant(event.target.value)}
-            disabled={loadingTenants}
           >
             {tenantOptions.map((tenant) => (
               <option key={tenant._id || tenant.tenantKey} value={tenant._id || tenant.tenantKey}>
@@ -145,7 +119,7 @@ export default function UserManagementView({ user }) {
             ))}
           </select>
           <span className="view-card__subtitle" style={{ margin: 0 }}>
-            {tenantLabel}
+            {selectedTenantLabel}
           </span>
           <div style={{ marginLeft: 'auto' }}>
             <button type="button" className="shadcn-btn primary" onClick={() => { setModalOpen(true) }}>Generar invitación</button>
@@ -176,7 +150,7 @@ export default function UserManagementView({ user }) {
                   <td>{item.name || 'Sin nombre'}</td>
                   <td>{item.email || 'Sin email'}</td>
                   <td>{item.role || 'user'}</td>
-                  <td>{item?.tenant?.companyName || item?.tenant?.tenantKey || 'Sin tenant'}</td>
+                  <td>{selectedTenantLabel}</td>
                   <td>{formatDate(item?.lastSession?.createdAt)}</td>
                   <td>Aceptado</td>
                 </tr>

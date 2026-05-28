@@ -1,11 +1,43 @@
 
 const authService = require('../services/auth.service');
-const { verifyGoogleToken, exchangeGoogleCode } = require('../services/google.service');
+const { verifyGoogleToken, exchangeGoogleCode, registerGoogleToken } = require('../services/google.service');
 const logger = require('../config/logger');
 const axios = require('axios');
 const pool = require('../config/database');
 const TokenService = require('../services/token.service');
 const { v4: uuidv4 } = require('uuid');
+
+async function persistFederatedArcSession(result) {
+  const loginId = uuidv4();
+  const expiresInSeconds = parseInt(result?.expiresIn || '3600', 10);
+  const expiresAt = new Date(Date.now() + expiresInSeconds * 1000);
+
+  await pool.query(
+    `INSERT INTO login_sessions (
+      login_id,
+      user_id,
+      nonce,
+      temp_token,
+      status,
+      created_at,
+      expires_at,
+      provider,
+      arc_level,
+      arc_session_id
+    ) VALUES ($1,$2,$3,$4,$5,NOW(),$6,$7,$8,$9)`,
+    [
+      loginId,
+      null,
+      result?.arcSessionId || null,
+      null,
+      'completed',
+      expiresAt,
+      'google',
+      result?.arc || null,
+      result?.arcSessionId || null,
+    ]
+  );
+}
 
 async function login(req, res, next) {
   try {
@@ -91,7 +123,13 @@ async function googleVerify(req, res, next) {
     // Delegar a SDK (que a su vez delega a Cloud Service)
     const tokenToVerify = id_token || access_token;
     const tokenType = id_token ? 'id_token' : 'access_token';
-    const result = await verifyGoogleToken(tokenToVerify, tokenType);
+    const result = await verifyGoogleToken(tokenToVerify, tokenType, { action: 'login' });
+
+    try {
+      await persistFederatedArcSession(result);
+    } catch (sessionErr) {
+      logger.warn(`[Auth Controller] No se pudo persistir login_sessions federada: ${sessionErr.message}`);
+    }
 
     logger.info(`[Auth Controller] ✓ ARC ${result.arc} token retornado a Flutter`);
 
@@ -112,6 +150,57 @@ async function googleVerify(req, res, next) {
     res.status(err.statusCode || 500).json({
       error: err.message,
       details: err.details || err.response?.data?.details
+    });
+  }
+}
+
+/**
+ * Registro inicial con Google + tenantKey.
+ * El backend externo no firma token local: confía en el token firmado por Cloud Service.
+ */
+async function googleRegister(req, res, next) {
+  try {
+    const { id_token, access_token, tenantKey } = req.body;
+
+    if (!tenantKey) {
+      return res.status(400).json({ error: 'tenantKey required', message: 'tenantKey es obligatorio para registrar' });
+    }
+
+    if (!id_token && !access_token) {
+      return res.status(400).json({
+        error: 'token_required',
+        message: 'Debes proporcionar id_token o access_token de Google',
+      });
+    }
+
+    const tokenToVerify = id_token || access_token;
+    const tokenType = id_token ? 'id_token' : 'access_token';
+
+    logger.info(`[Auth Controller] Registrando usuario Google con tenantKey=${tenantKey}`);
+
+    const result = await registerGoogleToken(tokenToVerify, tenantKey, tokenType);
+
+    try {
+      await persistFederatedArcSession(result);
+    } catch (sessionErr) {
+      logger.warn(`[Auth Controller] No se pudo persistir login_sessions federada (register): ${sessionErr.message}`);
+    }
+
+    return res.status(200).json({
+      success: true,
+      access_token: result.access_token,
+      token_type: 'Bearer',
+      arc: result.arc,
+      amr: result.amr,
+      user: result.user,
+      arcSessionId: result.arcSessionId,
+      expires_in: result.expiresIn,
+    });
+  } catch (err) {
+    logger.error(`[Auth Controller] Error en googleRegister: ${err.message}`);
+    return res.status(err.statusCode || 500).json({
+      error: err.message,
+      details: err.details || err.response?.data?.details,
     });
   }
 }
@@ -215,7 +304,7 @@ async function googleCallback(req, res, next) {
   }
 }
 
-module.exports = { login, stepUp, devStepUp, googleVerify, googleExchange, enrollBiometric, googleStart, googleCallback };
+module.exports = { login, stepUp, devStepUp, googleVerify, googleRegister, googleExchange, enrollBiometric, googleStart, googleCallback };
 
 async function googleExchange(req, res, next) {
   try {

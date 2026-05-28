@@ -3,11 +3,17 @@ require('dotenv').config();
 const app = require('./app');
 const pool = require('./config/database');
 const logger = require('./config/logger');
+const { run: runMigrations } = require('./scripts/migrate');
 
 const PORT = process.env.PORT || 4000;
 
 (async () => {
   try {
+    await runMigrations({ closePool: false });
+    if (process.exitCode && process.exitCode !== 0) {
+      throw new Error('Database migrations failed');
+    }
+
     if (process.env.AUTH_DEV_BYPASS === 'true') {
       logger.warn('⚠️ AUTH_DEV_BYPASS enabled, skipping PostgreSQL connection');
     } else {
