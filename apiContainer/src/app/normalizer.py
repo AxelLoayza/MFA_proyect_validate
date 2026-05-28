@@ -3,6 +3,7 @@ Biometric Data Normalizer - Padding and normalization logic
 """
 from typing import List, Tuple, Dict, Any
 import math
+import numpy as np
 from .models import StrokePoint, NormalizationRequest
 from .config import get_settings
 
@@ -28,15 +29,65 @@ def normalize_stroke(request: NormalizationRequest) -> Tuple[List[StrokePoint], 
         raise ValueError(f"Stroke too short: {num_points} points < minimum required {settings.MIN_STROKE_POINTS}")
     elif num_points > settings.MAX_STROKE_POINTS:
         raise ValueError(f"Too many points: {num_points} > {settings.MAX_STROKE_POINTS}")
-    else:
-        # Padding a MAX_STROKE_POINTS para estandarizar transporte
-        # Cloud service usa real_length para extraer solo datos reales
-        normalized = apply_padding(points, settings.MAX_STROKE_POINTS, "repeat_last")
-    
+
+    if settings.NORMALIZATION_PROFILE.lower() == "repo_compat":
+        normalized = normalize_repo_compat(points, 400)
+        features = extract_features(normalized, request.stroke_duration_ms, real_length)
+        features["normalization_profile"] = "repo_compat"
+        features["target_length"] = 400
+        features["representation_strategy"] = "dtw_medoid"
+        return normalized, features
+
+    # Padding a MAX_STROKE_POINTS para estandarizar transporte
+    # Cloud service usa real_length para extraer solo datos reales
+    normalized = apply_padding(points, settings.MAX_STROKE_POINTS, "repeat_last")
 
     features = extract_features(normalized, request.stroke_duration_ms, real_length)
-    
+
     return normalized, features
+
+
+def normalize_repo_compat(points: List[StrokePoint], target_count: int) -> List[StrokePoint]:
+    """
+    Normalize a stroke to the repo-compatible format used by the external LSTM.
+
+    Keeps the raw sequence structure and only rescales x/y robustly using percentiles.
+    Time is preserved as relative milliseconds and pressure is left in [0, 1].
+    """
+    if not points:
+        return []
+
+    cropped = list(points[:target_count])
+    if len(cropped) > target_count:
+        cropped = cropped[:target_count]
+
+    xs = np.array([p.x for p in cropped], dtype=float)
+    ys = np.array([p.y for p in cropped], dtype=float)
+    ts = np.array([p.t for p in cropped], dtype=float)
+    ps = np.array([p.p for p in cropped], dtype=float)
+
+    def _robust_scale(values: np.ndarray) -> np.ndarray:
+        low = np.percentile(values, 10)
+        high = np.percentile(values, 90)
+        if high <= low:
+            return np.zeros_like(values, dtype=float)
+        return np.clip((values - low) / (high - low), 0.0, 1.0)
+
+    xs = _robust_scale(xs)
+    ys = _robust_scale(ys)
+
+    ps = np.clip(ps, 0.0, 1.0)
+
+    normalized = [
+        StrokePoint(x=float(x), y=float(y), t=int(t), p=float(p))
+        for x, y, t, p in zip(xs, ys, ts, ps)
+    ]
+
+    while len(normalized) < target_count:
+        last = normalized[-1]
+        normalized.append(StrokePoint(x=last.x, y=last.y, t=last.t + 1, p=last.p))
+
+    return normalized[:target_count]
 
 
 def apply_padding(points: List[StrokePoint], target_count: int, strategy: str = "linear_interpolation") -> List[StrokePoint]:

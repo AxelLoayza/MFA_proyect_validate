@@ -7,6 +7,9 @@ const BiometricProfileSchema = new mongoose.Schema({
   authTag: { type: String, required: true },
   iv: { type: String, required: true },
   masterFeatureEncrypted: { type: String, required: true },
+  preprocessingProfile: { type: String, default: 'repo_compat' },
+  representationStrategy: { type: String, default: 'dtw_medoid' },
+  templateShape: { type: String, default: 'raw_4' },
   samplesUsed: { type: Number, default: 5 },
   modelVersion: { type: String, default: 'lstm_v1' },
   lastUpdated: { type: Date, default: null }

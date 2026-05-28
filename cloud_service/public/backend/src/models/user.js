@@ -22,6 +22,9 @@ const TenantRefSchema = new mongoose.Schema({
 const BiometricTemplateSchema = new mongoose.Schema({
   biometricProfileId: { type: mongoose.Schema.Types.ObjectId, ref: 'BiometricProfile', default: null },
   modelVersion: { type: String, default: null },
+  preprocessingProfile: { type: String, default: null },
+  representationStrategy: { type: String, default: null },
+  templateShape: { type: String, default: null },
   samplesUsed: { type: Number, default: 0 },
   enrolledAt: { type: Date, default: null }
 }, { _id: false });

@@ -12,7 +12,7 @@ const User = require('../models/user');
 const ArcSession = require('../models/arcSession');
 const Tenant = require('../models/tenant');
 const BiometricProfile = require('../models/biometricProfile');
-const { encryptBiometric } = require('../utils/crypto');
+const { encryptBiometric, decryptBiometric } = require('../utils/crypto');
 
 const PRIVATE_BIOMETRIC_URL = process.env.SDK_URL || 'http://localhost:8000';
 const PRIVATE_LSTM_URL = process.env.PRIVATE_LSTM_URL || process.env.PRIVATE_BIOMETRIC_URL || 'http://localhost:9001';
@@ -183,13 +183,16 @@ function getBiometricTemplateDetails(user, biometricProfile = null) {
   const biometricProfileId = getBiometricProfileId(user, biometricProfile);
   const template = user?.biometricTemplate || {};
 
-  if (!biometricProfileId && !template.modelVersion && !template.samplesUsed && !template.enrolledAt && !biometricProfile) {
+  if (!biometricProfileId && !template.modelVersion && !template.samplesUsed && !template.enrolledAt && !template.preprocessingProfile && !template.representationStrategy && !biometricProfile) {
     return null;
   }
 
   return {
     biometricProfileId,
     modelVersion: template.modelVersion || biometricProfile?.modelVersion || null,
+    preprocessingProfile: template.preprocessingProfile || biometricProfile?.preprocessingProfile || null,
+    representationStrategy: template.representationStrategy || biometricProfile?.representationStrategy || null,
+    templateShape: template.templateShape || biometricProfile?.templateShape || null,
     samplesUsed: template.samplesUsed ?? biometricProfile?.samplesUsed ?? null,
     enrolledAt: template.enrolledAt || null
   };
@@ -1028,7 +1031,16 @@ router.post('/enroll', async (req, res) => {
       return res.status(403).json({ error: 'tenant_required', message: 'No se pudo resolver el tenant asociado al usuario' });
     }
 
-    const { encryptedData, iv, authTag } = encryptBiometric(biometricPayload);
+    const enrollmentTemplate = {
+      templateVersion: 'arc_signature_template_v1',
+      preprocessingProfile: 'repo_compat',
+      representationStrategy: payload.representation_strategy || 'dtw_medoid',
+      templateShape: Array.isArray(biometricPayload) ? 'raw_5_signatures' : (biometricPayload?.dtw_medoid ? 'raw_4' : 'unknown'),
+      samplesUsed,
+      masterFeature: biometricPayload
+    };
+
+    const { encryptedData, iv, authTag } = encryptBiometric(enrollmentTemplate);
 
     const profile = await BiometricProfile.findOneAndUpdate(
       { userId: user._id.toString() },
@@ -1038,6 +1050,9 @@ router.post('/enroll', async (req, res) => {
         authTag,
         iv,
         masterFeatureEncrypted: encryptedData,
+        preprocessingProfile: enrollmentTemplate.preprocessingProfile,
+        representationStrategy: enrollmentTemplate.representationStrategy,
+        templateShape: enrollmentTemplate.templateShape,
         samplesUsed,
         modelVersion: 'lstm_v1'
       },
@@ -1047,6 +1062,9 @@ router.post('/enroll', async (req, res) => {
     user.biometricTemplate = {
       biometricProfileId: profile._id.toString(),
       modelVersion: profile.modelVersion,
+      preprocessingProfile: profile.preprocessingProfile,
+      representationStrategy: profile.representationStrategy,
+      templateShape: profile.templateShape,
       samplesUsed: profile.samplesUsed,
       enrolledAt: profile.updatedAt
     };
@@ -1197,6 +1215,24 @@ router.post('/step-up', async (req, res) => {
         message: 'El usuario no tiene perfil biométrico registrado'
       });
     }
+
+    let referenceTemplate;
+    try {
+      referenceTemplate = decryptBiometric(
+        biometricProfile.masterFeatureEncrypted,
+        biometricProfile.iv,
+        biometricProfile.authTag
+      );
+    } catch (error) {
+      return res.status(500).json({
+        success: false,
+        status: 'error',
+        error: 'template_decrypt_failed',
+        message: 'No se pudo recuperar la plantilla maestra biométrica'
+      });
+    }
+
+    normalizedSignature.reference_template = referenceTemplate;
 
     const privateResult = await callPrivateLstmValidation(normalizedSignature);
 

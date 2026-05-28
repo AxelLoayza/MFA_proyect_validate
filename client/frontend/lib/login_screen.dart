@@ -40,6 +40,24 @@ class StrokePainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
+    final guidePaint = Paint()
+      ..color = const Color(0xFF94A3B8)
+      ..strokeWidth = 1.3
+      ..strokeCap = StrokeCap.round
+      ..isAntiAlias = true;
+
+    final baselineY = size.height * 0.72;
+    const dashWidth = 10.0;
+    const dashGap = 8.0;
+    for (double x = size.width * 0.08; x < size.width * 0.92; x += dashWidth + dashGap) {
+      final endX = (x + dashWidth).clamp(size.width * 0.08, size.width * 0.92);
+      canvas.drawLine(
+        Offset(x, baselineY),
+        Offset(endX, baselineY),
+        guidePaint,
+      );
+    }
+
     if (points.isEmpty) return;
 
     final paint = Paint()

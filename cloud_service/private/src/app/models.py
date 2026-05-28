@@ -39,6 +39,10 @@ class BiometricRequest(BaseModel):
     )
     features: BiometricFeatures = Field(..., description="Extracted features")
     real_length: int = Field(..., description="Original length before padding", ge=100)
+    reference_template: Optional[Dict[str, Any]] = Field(
+        None,
+        description="Optional enrollment template used for step-up comparison"
+    )
 
     @field_validator('normalized_stroke')
     @classmethod

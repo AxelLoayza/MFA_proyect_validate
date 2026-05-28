@@ -55,6 +55,7 @@ class Settings:
     MIN_STROKE_POINTS: int = int(os.getenv("MIN_STROKE_POINTS", "100"))
     MAX_STROKE_POINTS: int = int(os.getenv("MAX_STROKE_POINTS", "1200"))
     PADDING_STRATEGY: str = os.getenv("PADDING_STRATEGY", "linear_interpolation")
+    NORMALIZATION_PROFILE: str = os.getenv("NORMALIZATION_PROFILE", "repo_compat")
 
     # ========== RATE LIMITING & SECURITY ==========
     RATE_LIMIT_REQUESTS: int = int(os.getenv("RATE_LIMIT_REQUESTS", "8"))

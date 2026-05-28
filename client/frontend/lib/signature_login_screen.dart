@@ -1,4 +1,7 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
 
 import 'dashboard_screen.dart';
 
@@ -18,6 +21,7 @@ class _SignatureLoginScreenState extends State<SignatureLoginScreen> {
   final List<_StrokePoint> _points = [];
   DateTime? _strokeStartTime;
   bool _isLoading = false;
+  static const String _backendUrl = 'http://localhost:4000';
 
   void _clearCanvas() {
     setState(() {
@@ -32,13 +36,43 @@ class _SignatureLoginScreenState extends State<SignatureLoginScreen> {
     });
 
     try {
-      final fakeArc1Token = '${widget.jwtToken}.arc1_fake_${DateTime.now().millisecondsSinceEpoch}';
+      if (_points.length < 100) {
+        throw Exception('Dibuja una firma más completa antes de validar.');
+      }
+
+      final response = await http.post(
+        Uri.parse('$_backendUrl/api/auth/step-up'),
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer ${widget.jwtToken}',
+        },
+        body: jsonEncode({
+          'normalized_signature': {
+            'normalized_stroke': _points.map((point) => point.toJson()).toList(),
+            'real_length': _points.length,
+            'features': {
+              'real_length': _points.length,
+            },
+          }
+        }),
+      );
+
+      final responseJson = response.body.isNotEmpty ? jsonDecode(response.body) as Map<String, dynamic> : <String, dynamic>{};
+
+      if (response.statusCode != 200) {
+        throw Exception(responseJson['message']?.toString() ?? responseJson['error']?.toString() ?? 'Validación fallida');
+      }
+
+      final accessToken = responseJson['access_token']?.toString();
+      if (accessToken == null || accessToken.isEmpty) {
+        throw Exception('El backend no devolvió un token ARC 1 válido');
+      }
 
       if (!mounted) return;
       Navigator.of(context).pushAndRemoveUntil(
         MaterialPageRoute(
           builder: (_) => DashboardScreen(
-            sessionToken: fakeArc1Token,
+            sessionToken: accessToken,
             companyName: 'ARC Secure Corp',
             displayName: 'Usuario autenticado',
             email: 'session@arc.local',
@@ -100,7 +134,7 @@ class _SignatureLoginScreenState extends State<SignatureLoginScreen> {
                   ),
                   const SizedBox(height: 12),
                   const Text(
-                    'Dibuja cualquier trazo en el área de abajo y podrás continuar temporalmente.',
+                    'Traza tu firma dentro del lienzo y usa la línea de referencia como guía.',
                     textAlign: TextAlign.center,
                     style: TextStyle(color: Colors.grey),
                   ),
@@ -203,6 +237,24 @@ class _StrokePainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
+    final guidePaint = Paint()
+      ..color = const Color(0xFF94A3B8)
+      ..strokeWidth = 1.3
+      ..strokeCap = StrokeCap.round
+      ..isAntiAlias = true;
+
+    final baselineY = size.height * 0.72;
+    const dashWidth = 10.0;
+    const dashGap = 8.0;
+    for (double x = size.width * 0.08; x < size.width * 0.92; x += dashWidth + dashGap) {
+      final endX = (x + dashWidth).clamp(size.width * 0.08, size.width * 0.92);
+      canvas.drawLine(
+        Offset(x, baselineY),
+        Offset(endX, baselineY),
+        guidePaint,
+      );
+    }
+
     if (points.isEmpty) return;
 
     final paint = Paint()

@@ -84,6 +84,69 @@ def preprocess_signature(
     return padded_features, mask
 
 
+def preprocess_signature_repo_compat(
+    stroke_points: List,
+    real_length: int,
+    target_length: int = 400,
+    robust_percentile: int = 10,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Compatibility preprocessing aligned with the external LSTM repo.
+
+    This keeps the raw 4-feature representation [x, y, t, p], avoids resampling,
+    and applies robust coordinate scaling using percentile bounds so capture
+    remains stable across different screen sizes.
+    """
+    logger.info(
+        f"Starting repo-compat preprocessing: {len(stroke_points)} points, real_length={real_length}"
+    )
+
+    original_sequence = recover_original_sequence(stroke_points, real_length)
+    logger.info(f"Repo-compat step 1: Recovered original sequence: {len(original_sequence)} points")
+
+    if len(original_sequence) < 100:
+        raise ValueError(f"Signature too short after removing padding: {len(original_sequence)} < 100")
+
+    sequence = original_sequence.astype(float).copy()
+
+    if len(sequence) > target_length:
+        center = len(sequence) // 2
+        half = target_length // 2
+        start_idx = max(0, center - half)
+        end_idx = start_idx + target_length
+        if end_idx > len(sequence):
+            end_idx = len(sequence)
+            start_idx = end_idx - target_length
+        sequence = sequence[start_idx:end_idx]
+        logger.info(f"Repo-compat step 2: Center crop applied: {len(original_sequence)} -> {len(sequence)}")
+
+    x = sequence[:, 0]
+    y = sequence[:, 1]
+    t = sequence[:, 2]
+    p = sequence[:, 3]
+
+    def _robust_scale(values: np.ndarray) -> np.ndarray:
+        low = np.percentile(values, robust_percentile)
+        high = np.percentile(values, 100 - robust_percentile)
+        if high <= low:
+            return np.zeros_like(values, dtype=float)
+        scaled = (values - low) / (high - low)
+        return np.clip(scaled, 0.0, 1.0)
+
+    x_norm = _robust_scale(x)
+    y_norm = _robust_scale(y)
+
+    p_norm = np.clip(p.astype(float), 0.0, 1.0)
+
+    features = np.column_stack([x_norm, y_norm, t.astype(float), p_norm]).astype(float)
+
+    padded_features, mask = apply_padding_with_mask(features, target_length)
+    logger.info(
+        f"Repo-compat preprocessing complete: final shape={padded_features.shape}, valid_points={int(mask.sum())}"
+    )
+    return padded_features, mask
+
+
 def generate_master_feature(list_of_signatures: List[Tuple[np.ndarray, np.ndarray]]) -> Dict[str, list]:
     """
     Calcula el 'Feature Maestro' a partir de 5 firmas procesadas.
