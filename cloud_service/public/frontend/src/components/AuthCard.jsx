@@ -73,7 +73,14 @@ export default function AuthCard({ onLogin, onNeedsRegistration }) {
         return
       }
 
-      setErrorMessage(response.message || response.error || 'No se pudo completar la autenticación')
+      const detailText = Array.isArray(response.details)
+        ? response.details.join(' | ')
+        : typeof response.details === 'string'
+          ? response.details
+          : response.details
+            ? JSON.stringify(response.details)
+            : ''
+      setErrorMessage(detailText ? `${response.message || response.error}: ${detailText}` : (response.message || response.error || 'No se pudo completar la autenticación'))
     } catch (err) {
       setErrorMessage(err?.message || 'Error de autenticación')
     } finally {

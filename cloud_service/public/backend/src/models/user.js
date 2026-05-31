@@ -31,7 +31,7 @@ const BiometricTemplateSchema = new mongoose.Schema({
 
 const UserSchema = new mongoose.Schema({
   googleId: { type: String, index: true, unique: true, sparse: true },
-  email: { type: String, index: true },
+  email: { type: String, index: true, unique: true, sparse: true, trim: true, lowercase: true },
   name: { type: String },
   role: { type: String, default: 'user', index: true },
   active: { type: Boolean, default: true },

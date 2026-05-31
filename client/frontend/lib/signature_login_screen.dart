@@ -21,7 +21,7 @@ class _SignatureLoginScreenState extends State<SignatureLoginScreen> {
   final List<_StrokePoint> _points = [];
   DateTime? _strokeStartTime;
   bool _isLoading = false;
-  static const String _backendUrl = 'http://localhost:4000';
+  static const String _sdkUrl = 'http://localhost:9001';
 
   void _clearCanvas() {
     setState(() {
@@ -41,19 +41,17 @@ class _SignatureLoginScreenState extends State<SignatureLoginScreen> {
       }
 
       final response = await http.post(
-        Uri.parse('$_backendUrl/api/auth/step-up'),
+        Uri.parse('$_sdkUrl/api/auth/step-up'),
         headers: {
           'Content-Type': 'application/json',
           'Authorization': 'Bearer ${widget.jwtToken}',
         },
         body: jsonEncode({
-          'normalized_signature': {
-            'normalized_stroke': _points.map((point) => point.toJson()).toList(),
-            'real_length': _points.length,
-            'features': {
-              'real_length': _points.length,
-            },
-          }
+          'timestamp': DateTime.now().toIso8601String(),
+          'stroke_points': _points.map((point) => point.toJson()).toList(),
+          'stroke_duration_ms': _strokeStartTime == null
+              ? 0
+              : DateTime.now().difference(_strokeStartTime!).inMilliseconds,
         }),
       );
 

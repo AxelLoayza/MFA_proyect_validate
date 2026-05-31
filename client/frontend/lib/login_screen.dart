@@ -200,9 +200,12 @@ class _LoginScreenState extends State<LoginScreen> {
           errorBody = {'error': 'http_${response.statusCode}', 'message': response.body};
         }
 
-        final detail = (errorBody['details'] as Map?)?.cast<String, dynamic>() ??
-            (errorBody['detail'] as Map?)?.cast<String, dynamic>() ??
-            const <String, dynamic>{};
+        final detailValue = errorBody['details'] ?? errorBody['detail'];
+        final detail = detailValue is Map
+            ? detailValue.cast<String, dynamic>()
+            : <String, dynamic>{
+                if (detailValue != null) 'message': detailValue.toString(),
+              };
 
         final errorCode =
             errorBody['error']?.toString() ??

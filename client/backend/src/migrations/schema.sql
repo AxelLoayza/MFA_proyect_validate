@@ -43,6 +43,21 @@ CREATE TABLE IF NOT EXISTS audit_events (
     created_at TIMESTAMP DEFAULT NOW()
 );
 
+ALTER TABLE audit_events
+    ADD COLUMN IF NOT EXISTS login_session_id UUID,
+    ADD COLUMN IF NOT EXISTS validation_id TEXT,
+    ADD COLUMN IF NOT EXISTS nonce TEXT,
+    ADD COLUMN IF NOT EXISTS decision VARCHAR(20),
+    ADD COLUMN IF NOT EXISTS confidence_score NUMERIC(5,4),
+    ADD COLUMN IF NOT EXISTS assertion_jws TEXT,
+    ADD COLUMN IF NOT EXISTS assertion_claims JSONB,
+    ADD COLUMN IF NOT EXISTS device_fingerprint TEXT,
+    ADD COLUMN IF NOT EXISTS ip_address TEXT,
+    ADD COLUMN IF NOT EXISTS event_type VARCHAR(50),
+    ADD COLUMN IF NOT EXISTS event_data JSONB,
+    ADD COLUMN IF NOT EXISTS success BOOLEAN,
+    ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT NOW();
+
 CREATE INDEX IF NOT EXISTS idx_audit_events_user_id ON audit_events(user_id);
 CREATE INDEX IF NOT EXISTS idx_audit_events_validation_id ON audit_events(validation_id);
 CREATE INDEX IF NOT EXISTS idx_audit_events_created_at ON audit_events(created_at);

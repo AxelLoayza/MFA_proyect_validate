@@ -94,6 +94,10 @@ function toObjectIdString(value) {
   return String(value);
 }
 
+function normalizeEmail(value) {
+  return value ? String(value).trim().toLowerCase() : null;
+}
+
 function buildTenantMembership(tenant, { role = 'user', status = 'active', isPrimary = true, joinedAt = new Date() } = {}) {
   if (!tenant) return null;
 
@@ -196,6 +200,80 @@ function getBiometricTemplateDetails(user, biometricProfile = null) {
     samplesUsed: template.samplesUsed ?? biometricProfile?.samplesUsed ?? null,
     enrolledAt: template.enrolledAt || null
   };
+}
+
+async function resolveUserFromDecodedClaims(decoded) {
+  if (!decoded) return null;
+
+  const sub = decoded.sub;
+  const email = decoded.email || null;
+  const googleId = decoded.googleId || decoded.providerId || null;
+
+  if (sub && mongoose.Types.ObjectId.isValid(sub)) {
+    const byId = await User.findById(sub);
+    if (byId) return byId;
+  }
+
+  const candidates = [];
+  if (googleId) candidates.push({ googleId });
+  if (email) candidates.push({ email });
+  if (sub) candidates.push({ googleId: sub });
+  if (sub) candidates.push({ email: sub });
+
+  for (const filter of candidates) {
+    const found = await User.findOne(filter);
+    if (found) return found;
+  }
+
+  return null;
+}
+
+async function ensureDevelopmentIdentity(decoded) {
+  if (process.env.NODE_ENV !== 'development') {
+    return null;
+  }
+
+  const sub = decoded?.sub || decoded?.email || crypto.randomUUID();
+  const email = normalizeEmail(decoded?.email) || `${String(sub).replace(/[^a-zA-Z0-9._-]/g, '_')}@dev.local`;
+  const name = decoded?.name || email.split('@')[0];
+
+  let tenant = await Tenant.findOne({ tenantKey: 'dev-local' });
+  if (!tenant) {
+    tenant = await Tenant.create({
+      tenantKey: 'dev-local',
+      companyName: 'Development Tenant',
+      domain: null,
+      status: 'active',
+      tier: 'none',
+      tokenSettings: {
+        arcTokenExpirySeconds: 300,
+        issuerName: process.env.JWT_ISSUER || 'LocalAzure',
+        algorithm: 'RS256'
+      }
+    });
+  }
+
+  const tenantContextDocument = buildTenantContextDocument(tenant, { role: 'user', status: 'active' });
+  let user = await User.findOne({ $or: [{ googleId: sub }, { email }] });
+
+  if (!user) {
+    user = await User.create({
+      googleId: String(sub),
+      email: normalizeEmail(email),
+      name,
+      role: 'user',
+      active: true,
+      isActive: true,
+      status: 'active',
+      tenant: tenantContextDocument,
+      tenantId: tenant._id,
+      tenantKey: tenant.tenantKey,
+      createdAt: new Date(),
+      updatedAt: new Date()
+    });
+  }
+
+  return user;
 }
 
 function buildArcUserResponse(user, biometricProfile = null) {
@@ -398,7 +476,8 @@ router.post('/google', async (req, res) => {
     if (!id_token) return res.status(400).json({ error: 'id_token required' });
 
     const payload = await verifyIdToken(id_token);
-    const { sub: googleId, email, name } = payload;
+    const { sub: googleId, email: rawEmail, name } = payload;
+    const email = normalizeEmail(rawEmail);
 
     let user = await User.findOne({ googleId }).lean();
 
@@ -523,7 +602,8 @@ router.post('/google/verify-arc-05', async (req, res) => {
 
     // Paso 1: Verificar id_token con Google
     const payload = await verifyIdToken(id_token);
-    const { sub: googleId, email, name } = payload;
+    const { sub: googleId, email: rawEmail, name } = payload;
+    const email = normalizeEmail(rawEmail);
 
     console.log(`[Cloud Service] Google token válido para ${email}`);
 
@@ -678,7 +758,8 @@ router.post('/google/verify-access', async (req, res) => {
     }
 
     const payload = await userinfoRes.json(); // contiene sub, email, name, etc.
-    const { sub: googleId, email, name } = payload;
+    const { sub: googleId, email: rawEmail, name } = payload;
+    const email = normalizeEmail(rawEmail);
 
     if (!googleId || !email) {
       return res.status(400).json({ error: 'invalid_token', message: 'Google access_token did not return valid profile' });
@@ -848,7 +929,8 @@ router.post('/google/exchange', async (req, res) => {
 
     // Paso 2: Verificar id_token con Google
     const payload = await verifyIdToken(id_token);
-    const { sub: googleId, email, name } = payload;
+    const { sub: googleId, email: rawEmail, name } = payload;
+    const email = normalizeEmail(rawEmail);
 
     console.log(`[Cloud Service] Google token válido para ${email}`);
 
@@ -1015,7 +1097,10 @@ router.post('/enroll', async (req, res) => {
       return res.status(403).json({ error: 'insufficient_arc', message: 'Se requiere un token pre-enrolamiento válido para registrar biometría' });
     }
 
-    const user = await User.findById(decoded.sub);
+    let user = await resolveUserFromDecodedClaims(decoded);
+    if (!user) {
+      user = await ensureDevelopmentIdentity(decoded);
+    }
     if (!user) {
       return res.status(404).json({ error: 'user_not_found', message: 'No se encontró el usuario autenticado' });
     }
@@ -1031,10 +1116,12 @@ router.post('/enroll', async (req, res) => {
       return res.status(403).json({ error: 'tenant_required', message: 'No se pudo resolver el tenant asociado al usuario' });
     }
 
+    const representationStrategy = req.body?.representation_strategy || req.body?.representationStrategy || 'dtw_medoid';
+
     const enrollmentTemplate = {
       templateVersion: 'arc_signature_template_v1',
       preprocessingProfile: 'repo_compat',
-      representationStrategy: payload.representation_strategy || 'dtw_medoid',
+      representationStrategy,
       templateShape: Array.isArray(biometricPayload) ? 'raw_5_signatures' : (biometricPayload?.dtw_medoid ? 'raw_4' : 'unknown'),
       samplesUsed,
       masterFeature: biometricPayload
@@ -1203,7 +1290,8 @@ router.post('/step-up', async (req, res) => {
       });
     }
 
-    const user = await User.findById(decoded.sub).lean();
+    const resolvedUser = await resolveUserFromDecodedClaims(decoded);
+    const user = resolvedUser ? resolvedUser.toObject() : null;
     if (!user) {
       return res.status(404).json({ error: 'user_not_found', message: 'No se encontró el usuario autenticado' });
     }

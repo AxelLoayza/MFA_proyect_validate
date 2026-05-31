@@ -8,7 +8,7 @@
 const axios = require('axios');
 const logger = require('../config/logger');
 
-const SDK_URL = process.env.SDK_URL || 'http://localhost:8000';
+const SDK_URL = process.env.SDK_URL || 'http://localhost:9001';
 const SDK_API_KEY = process.env.SDK_API_KEY || 'sdk_default_key';
 const SDK_SECRET = process.env.SDK_SECRET || 'sdk_default_secret';
 

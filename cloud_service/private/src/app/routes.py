@@ -6,15 +6,15 @@ from typing import Dict, Any
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import JSONResponse
 
-from .config import settings
-from .models import BiometricRequest, BiometricResponse, HealthResponse, EnrollmentCloudRequest, MasterFeatureResponse
-from .auth import verify_credentials
-from .utils import (
+from app.config import settings
+from app.models import BiometricRequest, BiometricResponse, HealthResponse, EnrollmentCloudRequest, MasterFeatureResponse
+from app.auth import verify_credentials
+from app.utils import (
     RateLimiter, 
     get_client_ip, 
     validate_stroke_points
 )
-from .preprocessing import preprocess_signature, preprocess_signature_repo_compat, compute_dtw_medoid_raw
+from app.preprocessing import preprocess_signature, preprocess_signature_repo_compat, compute_dtw_medoid_raw
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +36,7 @@ async def health_check():
     Returns:
         HealthResponse: Service health status
     """
-    from . import __version__
+    from app import __version__
     
     return HealthResponse(
         status="healthy",
