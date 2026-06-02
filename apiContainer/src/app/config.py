@@ -47,7 +47,7 @@ class Settings:
     # ========== PUBLIC GATEWAY STEP-UP ==========
     PUBLIC_GATEWAY_STEP_UP_ENDPOINT: str = os.getenv(
         "PUBLIC_GATEWAY_STEP_UP_ENDPOINT",
-        "http://localhost:4003/step-up"
+        "http://localhost:4003/auth/step-up"
     )
     PUBLIC_GATEWAY_TIMEOUT: int = int(os.getenv("PUBLIC_GATEWAY_TIMEOUT", "30"))
 

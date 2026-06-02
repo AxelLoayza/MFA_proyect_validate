@@ -1,12 +1,22 @@
 const crypto = require('crypto');
 
-const SECRET_KEY = process.env.BIOMETRIC_SECRET_KEY
-  ? Buffer.from(process.env.BIOMETRIC_SECRET_KEY, 'hex')
-  : crypto.randomBytes(32);
+function deriveSecretKey() {
+  const configuredKey = process.env.BIOMETRIC_SECRET_KEY || process.env.SECURITY_KEY;
 
-if (!process.env.BIOMETRIC_SECRET_KEY) {
-  console.warn('WARNING: BIOMETRIC_SECRET_KEY is not configured; using a temporary development key.');
+  if (!configuredKey) {
+    throw new Error(
+      'BIOMETRIC_SECRET_KEY or SECURITY_KEY must be configured to encrypt/decrypt biometric profiles.'
+    );
+  }
+
+  if (/^[0-9a-fA-F]{64}$/.test(configuredKey)) {
+    return Buffer.from(configuredKey, 'hex');
+  }
+
+  return crypto.createHash('sha256').update(configuredKey, 'utf8').digest();
 }
+
+const SECRET_KEY = deriveSecretKey();
 
 const ALGORITHM = 'aes-256-gcm';
 

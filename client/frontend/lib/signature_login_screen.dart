@@ -2,16 +2,14 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'dashboard_screen.dart';
 
 class SignatureLoginScreen extends StatefulWidget {
   final String jwtToken;
 
-  const SignatureLoginScreen({
-    super.key,
-    required this.jwtToken,
-  });
+  const SignatureLoginScreen({super.key, required this.jwtToken});
 
   @override
   State<SignatureLoginScreen> createState() => _SignatureLoginScreenState();
@@ -41,7 +39,7 @@ class _SignatureLoginScreenState extends State<SignatureLoginScreen> {
       }
 
       final response = await http.post(
-        Uri.parse('$_sdkUrl/api/auth/step-up'),
+        Uri.parse('$_sdkUrl/auth/step-up'),
         headers: {
           'Content-Type': 'application/json',
           'Authorization': 'Bearer ${widget.jwtToken}',
@@ -55,16 +53,21 @@ class _SignatureLoginScreenState extends State<SignatureLoginScreen> {
         }),
       );
 
-      final responseJson = response.body.isNotEmpty ? jsonDecode(response.body) as Map<String, dynamic> : <String, dynamic>{};
+      final responseJson = response.body.isNotEmpty
+          ? jsonDecode(response.body) as Map<String, dynamic>
+          : <String, dynamic>{};
 
       if (response.statusCode != 200) {
-        throw Exception(responseJson['message']?.toString() ?? responseJson['error']?.toString() ?? 'Validación fallida');
+        throw Exception(_readErrorMessage(responseJson));
       }
 
       final accessToken = responseJson['access_token']?.toString();
       if (accessToken == null || accessToken.isEmpty) {
         throw Exception('El backend no devolvió un token ARC 1 válido');
       }
+
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('mfa_token', accessToken);
 
       if (!mounted) return;
       Navigator.of(context).pushAndRemoveUntil(
@@ -95,6 +98,22 @@ class _SignatureLoginScreenState extends State<SignatureLoginScreen> {
         });
       }
     }
+  }
+
+  String _readErrorMessage(Map<String, dynamic> responseJson) {
+    final detail = responseJson['detail'];
+    if (detail is Map) {
+      return detail['message']?.toString() ??
+          detail['details']?.toString() ??
+          detail['error']?.toString() ??
+          'Validación fallida';
+    }
+
+    return responseJson['message']?.toString() ??
+        responseJson['details']?.toString() ??
+        responseJson['error']?.toString() ??
+        detail?.toString() ??
+        'Validación fallida';
   }
 
   @override
@@ -141,7 +160,10 @@ class _SignatureLoginScreenState extends State<SignatureLoginScreen> {
                     child: Container(
                       decoration: BoxDecoration(
                         color: Colors.white,
-                        border: Border.all(color: Colors.grey.shade300, width: 2),
+                        border: Border.all(
+                          color: Colors.grey.shade300,
+                          width: 2,
+                        ),
                         borderRadius: BorderRadius.circular(12),
                       ),
                       child: ClipRRect(
@@ -150,25 +172,33 @@ class _SignatureLoginScreenState extends State<SignatureLoginScreen> {
                           onPanStart: (details) {
                             setState(() {
                               _strokeStartTime ??= DateTime.now();
-                              final t = DateTime.now().difference(_strokeStartTime!).inMilliseconds;
-                              _points.add(_StrokePoint(
-                                x: details.localPosition.dx,
-                                y: details.localPosition.dy,
-                                t: t,
-                                p: 0.5,
-                              ));
+                              final t = DateTime.now()
+                                  .difference(_strokeStartTime!)
+                                  .inMilliseconds;
+                              _points.add(
+                                _StrokePoint(
+                                  x: details.localPosition.dx,
+                                  y: details.localPosition.dy,
+                                  t: t,
+                                  p: 0.5,
+                                ),
+                              );
                             });
                           },
                           onPanUpdate: (details) {
                             setState(() {
                               if (_strokeStartTime != null) {
-                                final t = DateTime.now().difference(_strokeStartTime!).inMilliseconds;
-                                _points.add(_StrokePoint(
-                                  x: details.localPosition.dx,
-                                  y: details.localPosition.dy,
-                                  t: t,
-                                  p: 0.5,
-                                ));
+                                final t = DateTime.now()
+                                    .difference(_strokeStartTime!)
+                                    .inMilliseconds;
+                                _points.add(
+                                  _StrokePoint(
+                                    x: details.localPosition.dx,
+                                    y: details.localPosition.dy,
+                                    t: t,
+                                    p: 0.5,
+                                  ),
+                                );
                               }
                             });
                           },
@@ -220,12 +250,7 @@ class _StrokePoint {
     required this.p,
   });
 
-  Map<String, dynamic> toJson() => {
-        'x': x,
-        'y': y,
-        't': t,
-        'p': p,
-      };
+  Map<String, dynamic> toJson() => {'x': x, 'y': y, 't': t, 'p': p};
 }
 
 class _StrokePainter extends CustomPainter {
@@ -244,7 +269,11 @@ class _StrokePainter extends CustomPainter {
     final baselineY = size.height * 0.72;
     const dashWidth = 10.0;
     const dashGap = 8.0;
-    for (double x = size.width * 0.08; x < size.width * 0.92; x += dashWidth + dashGap) {
+    for (
+      double x = size.width * 0.08;
+      x < size.width * 0.92;
+      x += dashWidth + dashGap
+    ) {
       final endX = (x + dashWidth).clamp(size.width * 0.08, size.width * 0.92);
       canvas.drawLine(
         Offset(x, baselineY),

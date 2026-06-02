@@ -24,12 +24,7 @@ class StrokePoint {
   });
 
   Map<String, dynamic> toJson() {
-    return {
-      'x': x,
-      'y': y,
-      't': t,
-      'p': p,
-    };
+    return {'x': x, 'y': y, 't': t, 'p': p};
   }
 }
 
@@ -49,7 +44,11 @@ class StrokePainter extends CustomPainter {
     final baselineY = size.height * 0.72;
     const dashWidth = 10.0;
     const dashGap = 8.0;
-    for (double x = size.width * 0.08; x < size.width * 0.92; x += dashWidth + dashGap) {
+    for (
+      double x = size.width * 0.08;
+      x < size.width * 0.92;
+      x += dashWidth + dashGap
+    ) {
       final endX = (x + dashWidth).clamp(size.width * 0.08, size.width * 0.92);
       canvas.drawLine(
         Offset(x, baselineY),
@@ -88,10 +87,13 @@ class LoginScreen extends StatefulWidget {
 }
 
 class _LoginScreenState extends State<LoginScreen> {
-  final String _backendUrl = dotenv.env['BACKEND_URL'] ?? 'http://localhost:4000';
-  final String _publicBackendUrl = dotenv.env['PUBLIC_BACKEND_URL'] ?? 'http://localhost:4003';
+  final String _backendUrl =
+      dotenv.env['BACKEND_URL'] ?? 'http://localhost:4000';
+  final String _publicBackendUrl =
+      dotenv.env['PUBLIC_BACKEND_URL'] ?? 'http://localhost:4003';
   final String _googleClientId =
-      dotenv.env['GOOGLE_CLIENT_ID'] ?? '246681881290-tpsk8rdg9rlt9t69j7o6dnfjf6cq21uq.apps.googleusercontent.com';
+      dotenv.env['GOOGLE_CLIENT_ID'] ??
+      '246681881290-tpsk8rdg9rlt9t69j7o6dnfjf6cq21uq.apps.googleusercontent.com';
 
   GoogleSignIn? _googleSignIn;
   String? _accessToken;
@@ -116,9 +118,7 @@ class _LoginScreenState extends State<LoginScreen> {
       );
     }
 
-    return GoogleSignIn(
-      scopes: const ['email', 'profile', 'openid'],
-    );
+    return GoogleSignIn(scopes: const ['email', 'profile', 'openid']);
   }
 
   Future<void> _signInWithGoogle() async {
@@ -129,7 +129,10 @@ class _LoginScreenState extends State<LoginScreen> {
 
     try {
       _googleSignIn ??= _buildGoogleSignIn();
-      
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove('mfa_token');
+      await _googleSignIn!.signOut();
+
       // Iniciar sesión con Google
       final account = await _googleSignIn!.signIn();
 
@@ -143,12 +146,13 @@ class _LoginScreenState extends State<LoginScreen> {
 
       // Obtener información de autenticación
       final auth = await account.authentication;
-      
+
       // Intentar obtener authorization_code (mobile) o idToken/accessToken (web/fallback)
       String? authCode = auth.serverAuthCode; // Mobile (authorization code)
       final idToken = auth.idToken; // id_token (may be null on web)
-      final accessToken = auth.accessToken; // access_token returned by some web flows
-      
+      final accessToken =
+          auth.accessToken; // access_token returned by some web flows
+
       // En web, google_sign_in 6.2.1 no tiene serverAuthCode en authentication
       // Usamos idToken como fallback que funciona en todas las plataformas
       // Prefer serverAuthCode (mobile). Otherwise prefer id_token, otherwise use access_token as fallback.
@@ -161,7 +165,9 @@ class _LoginScreenState extends State<LoginScreen> {
       }
 
       if (authCode == null || authCode.isEmpty) {
-        throw Exception('No se obtuvo authorization_code, id_token ni access_token de Google. Asegúrate de incluir el scope "openid" y permitir el retorno de tokens.');
+        throw Exception(
+          'No se obtuvo authorization_code, id_token ni access_token de Google. Asegúrate de incluir el scope "openid" y permitir el retorno de tokens.',
+        );
       }
 
       setState(() {
@@ -197,7 +203,10 @@ class _LoginScreenState extends State<LoginScreen> {
         try {
           errorBody = jsonDecode(response.body) as Map<String, dynamic>;
         } catch (_) {
-          errorBody = {'error': 'http_${response.statusCode}', 'message': response.body};
+          errorBody = {
+            'error': 'http_${response.statusCode}',
+            'message': response.body,
+          };
         }
 
         final detailValue = errorBody['details'] ?? errorBody['detail'];
@@ -218,7 +227,8 @@ class _LoginScreenState extends State<LoginScreen> {
 
         if (response.statusCode == 404 && errorCode == 'needs_registration') {
           setState(() {
-            _statusMessage = 'Tu cuenta requiere registro inicial con codigo de invitacion.';
+            _statusMessage =
+                'Tu cuenta requiere registro inicial con codigo de invitacion.';
             _isLoading = false;
           });
 
@@ -241,7 +251,8 @@ class _LoginScreenState extends State<LoginScreen> {
       }
 
       final responseJson = jsonDecode(response.body) as Map<String, dynamic>;
-      final user = (responseJson['user'] as Map?)?.cast<String, dynamic>() ?? const {};
+      final user =
+          (responseJson['user'] as Map?)?.cast<String, dynamic>() ?? const {};
 
       final sessionToken = responseJson['access_token']?.toString();
 
@@ -251,12 +262,12 @@ class _LoginScreenState extends State<LoginScreen> {
         _email = user['email']?.toString() ?? account.email;
         _name = user['name']?.toString() ?? account.displayName;
         _biometricEnrolled = user['biometricEnrolled'] == true;
-        _statusMessage = 'Sesión iniciada correctamente con ARC ${_arc ?? '0.5'}.';
+        _statusMessage =
+            'Sesión iniciada correctamente con ARC ${_arc ?? '0.5'}.';
         _isLoading = false;
       });
 
       if (sessionToken != null && sessionToken.isNotEmpty) {
-        final prefs = await SharedPreferences.getInstance();
         await prefs.setString('mfa_token', sessionToken);
       }
 
@@ -272,7 +283,7 @@ class _LoginScreenState extends State<LoginScreen> {
         _isLoading = false;
       });
       _showMessage('Error en inicio de sesión: ${e.toString()}');
-      
+
       if (kDebugMode) {
         debugPrint('[LoginScreen] Error: $e');
       }
@@ -295,7 +306,9 @@ class _LoginScreenState extends State<LoginScreen> {
         _statusMessage = 'Enrolamiento completado. ARC 1.0 activo.';
       });
       if (!mounted) return;
-      _showMessage('✓ Enrolamiento completado. ARC 1.0 emitido por Cloud Service.');
+      _showMessage(
+        '✓ Enrolamiento completado. ARC 1.0 emitido por Cloud Service.',
+      );
     }
   }
 
@@ -356,13 +369,18 @@ class _LoginScreenState extends State<LoginScreen> {
             : 'Enrolamiento completado. ARC 1.0 activo.';
       });
       if (!mounted) return;
-      _showMessage(hasBiometric
-          ? '✓ Login biométrico completado. ARC 1.0 activo.'
-          : '✓ Enrolamiento completado. ARC 1.0 activo.');
+      _showMessage(
+        hasBiometric
+            ? '✓ Login biométrico completado. ARC 1.0 activo.'
+            : '✓ Enrolamiento completado. ARC 1.0 activo.',
+      );
     }
   }
+
   Future<void> _resetSession() async {
     await _googleSignIn?.signOut();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove('mfa_token');
     setState(() {
       _accessToken = null;
       _arc = null;
@@ -394,9 +412,7 @@ class _LoginScreenState extends State<LoginScreen> {
     });
 
     try {
-      final requestBody = <String, dynamic>{
-        'tenantKey': tenantKey,
-      };
+      final requestBody = <String, dynamic>{'tenantKey': tenantKey};
 
       if (idToken != null && idToken.isNotEmpty) {
         requestBody['id_token'] = idToken;
@@ -414,10 +430,15 @@ class _LoginScreenState extends State<LoginScreen> {
 
       final responseJson = jsonDecode(response.body) as Map<String, dynamic>;
       if (response.statusCode != 200) {
-        throw Exception(responseJson['message']?.toString() ?? responseJson['error']?.toString() ?? 'Registro fallido');
+        throw Exception(
+          responseJson['message']?.toString() ??
+              responseJson['error']?.toString() ??
+              'Registro fallido',
+        );
       }
 
-      final user = (responseJson['user'] as Map?)?.cast<String, dynamic>() ?? const {};
+      final user =
+          (responseJson['user'] as Map?)?.cast<String, dynamic>() ?? const {};
       final sessionToken = responseJson['access_token']?.toString();
 
       setState(() {
@@ -426,7 +447,8 @@ class _LoginScreenState extends State<LoginScreen> {
         _email = user['email']?.toString() ?? _email;
         _name = user['name']?.toString() ?? _name;
         _biometricEnrolled = user['biometricEnrolled'] == true;
-        _statusMessage = 'Registro completado. Sesión ARC ${_arc ?? '0.5'} activa.';
+        _statusMessage =
+            'Registro completado. Sesión ARC ${_arc ?? '0.5'} activa.';
       });
 
       if (sessionToken != null && sessionToken.isNotEmpty) {
@@ -538,7 +560,11 @@ class _LoginScreenState extends State<LoginScreen> {
                       child: const Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Icon(Icons.verified_user_rounded, color: Colors.white, size: 40),
+                          Icon(
+                            Icons.verified_user_rounded,
+                            color: Colors.white,
+                            size: 40,
+                          ),
                           SizedBox(height: 16),
                           Text(
                             'ARC Secure Access',
@@ -589,10 +615,17 @@ class _LoginScreenState extends State<LoginScreen> {
                           ? const SizedBox(
                               width: 18,
                               height: 18,
-                              child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: Colors.white,
+                              ),
                             )
                           : const Icon(Icons.login_rounded),
-                      label: Text(_email == null ? 'Iniciar con Google' : 'Reiniciar inicio de sesión'),
+                      label: Text(
+                        _email == null
+                            ? 'Iniciar con Google'
+                            : 'Reiniciar inicio de sesión',
+                      ),
                       style: ElevatedButton.styleFrom(
                         backgroundColor: const Color(0xFF111827),
                         shape: RoundedRectangleBorder(
@@ -611,7 +644,9 @@ class _LoginScreenState extends State<LoginScreen> {
                             borderRadius: BorderRadius.circular(16),
                           ),
                         ),
-                        child: const Text('Continuar al enrolamiento biométrico'),
+                        child: const Text(
+                          'Continuar al enrolamiento biométrico',
+                        ),
                       ),
                     ],
                     if (_accessToken != null) ...[
@@ -653,7 +688,11 @@ class _LoginScreenState extends State<LoginScreen> {
                         children: [
                           _StatusChip(label: 'ARC ${_arc ?? '0.5'}'),
                           const SizedBox(width: 10),
-                          _StatusChip(label: _biometricEnrolled ? 'Firma registrada' : 'Firma pendiente'),
+                          _StatusChip(
+                            label: _biometricEnrolled
+                                ? 'Firma registrada'
+                                : 'Firma pendiente',
+                          ),
                           const SizedBox(width: 10),
                           _StatusChip(label: kIsWeb ? 'Web' : 'Mobile'),
                         ],
