@@ -1,0 +1,64 @@
+# docker-compose para la demo en EC2 (o local).
+# Ejecutar desde la carpeta cloud_service/ :  docker compose up -d --build
+#
+# Topologia:
+#   nginx (puerto 80 publico) -> public-backend (4003) -> private-ml (9000, interno)
+# private-ml NO se expone al exterior; solo el backend lo alcanza por la red interna.
+
+services:
+  frontend:
+    build:
+      context: ./public/frontend
+    networks:
+      - appnet
+    restart: unless-stopped
+
+  private-ml:
+    build:
+      context: ./private
+    env_file:
+      - ./private/.env
+    environment:
+      - API_HOST=0.0.0.0
+      - API_PORT=9000
+      - TLS_ENABLED=false
+      - MODEL_PATH=./app/Entrenamineto_LSTM/embedding_network_mini.tflite
+    expose:
+      - "9000"
+    networks:
+      - appnet
+    restart: unless-stopped
+
+  public-backend:
+    build:
+      context: ./public/backend
+    env_file:
+      - ./public/backend/.env
+    environment:
+      - LISTEN_URL=http://0.0.0.0:4003
+      - PRIVATE_LSTM_URL=http://private-ml:9000
+      - SDK_URL=http://private-ml:9000
+    expose:
+      - "4003"
+    depends_on:
+      - private-ml
+    networks:
+      - appnet
+    restart: unless-stopped
+
+  nginx:
+    image: nginx:1.27-alpine
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - frontend
+      - public-backend
+    networks:
+      - appnet
+    restart: unless-stopped
+
+networks:
+  appnet:
+    driver: bridge

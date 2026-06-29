@@ -1,0 +1,673 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: CloudFormation template for cloud_service public and private ECS services.
+
+Parameters:
+  EnvironmentName:
+    Type: String
+    Default: mfa
+
+  VpcCidr:
+    Type: String
+    Default: 10.40.0.0/16
+
+  PublicSubnetACidr:
+    Type: String
+    Default: 10.40.0.0/24
+
+  PublicSubnetBCidr:
+    Type: String
+    Default: 10.40.1.0/24
+
+  PrivateSubnetACidr:
+    Type: String
+    Default: 10.40.10.0/24
+
+  PrivateSubnetBCidr:
+    Type: String
+    Default: 10.40.11.0/24
+
+  UseNatGateway:
+    Type: String
+    AllowedValues: [true, false]
+    Default: true
+
+  PublicBackendImage:
+    Type: String
+
+  PrivateMlImage:
+    Type: String
+
+  MongoUri:
+    Type: String
+    NoEcho: true
+
+  MongodbDbName:
+    Type: String
+    Default: mfa_biometric
+
+  GoogleClientId:
+    Type: String
+
+  GoogleClientSecret:
+    Type: String
+    NoEcho: true
+
+  GoogleRedirectUri:
+    Type: String
+    Default: ''
+
+  JwtAlgo:
+    Type: String
+    Default: RS256
+
+  JwtExpirationSeconds:
+    Type: String
+    Default: 3600
+
+  MlServiceUsername:
+    Type: String
+    Default: bmfa_user
+
+  MlServicePassword:
+    Type: String
+    NoEcho: true
+
+  BiometricSecretKey:
+    Type: String
+    NoEcho: true
+
+  ServiceApiKey:
+    Type: String
+    Default: ''
+    NoEcho: true
+
+  MailHost:
+    Type: String
+    Default: smtp.gmail.com
+
+  MailPort:
+    Type: String
+    Default: 465
+
+  MailEncryption:
+    Type: String
+    Default: ssl
+
+  MailUsername:
+    Type: String
+    Default: ''
+    NoEcho: true
+
+  MailPassword:
+    Type: String
+    Default: ''
+    NoEcho: true
+
+  MailFromAddress:
+    Type: String
+    Default: ''
+
+  AppName:
+    Type: String
+    Default: ARC Secure Cloud
+
+  InviteExpirationDays:
+    Type: String
+    Default: 1
+
+  PublicBackendPort:
+    Type: String
+    Default: 4003
+
+  PrivateMlPort:
+    Type: String
+    Default: 9000
+
+  PrivateEnvironment:
+    Type: String
+    Default: production
+
+  LogLevel:
+    Type: String
+    Default: INFO
+
+Conditions:
+  CreateNatGateway: !Equals [!Ref UseNatGateway, true]
+
+Resources:
+  Vpc:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref VpcCidr
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+
+  VpcGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref Vpc
+      InternetGatewayId: !Ref InternetGateway
+
+  PublicSubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: !Ref PublicSubnetACidr
+      MapPublicIpOnLaunch: true
+      AvailabilityZone: !Select [0, !GetAZs '']
+
+  PublicSubnetB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: !Ref PublicSubnetBCidr
+      MapPublicIpOnLaunch: true
+      AvailabilityZone: !Select [1, !GetAZs '']
+
+  PrivateSubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: !Ref PrivateSubnetACidr
+      MapPublicIpOnLaunch: false
+      AvailabilityZone: !Select [0, !GetAZs '']
+
+  PrivateSubnetB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: !Ref PrivateSubnetBCidr
+      MapPublicIpOnLaunch: false
+      AvailabilityZone: !Select [1, !GetAZs '']
+
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref Vpc
+
+  PublicDefaultRoute:
+    Type: AWS::EC2::Route
+    DependsOn: VpcGatewayAttachment
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  PublicSubnetARouteAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnetA
+      RouteTableId: !Ref PublicRouteTable
+
+  PublicSubnetBRouteAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnetB
+      RouteTableId: !Ref PublicRouteTable
+
+  PrivateRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref Vpc
+
+  NatEip:
+    Type: AWS::EC2::EIP
+    Condition: CreateNatGateway
+    Properties:
+      Domain: vpc
+
+  NatGateway:
+    Type: AWS::EC2::NatGateway
+    Condition: CreateNatGateway
+    DependsOn: VpcGatewayAttachment
+    Properties:
+      AllocationId: !GetAtt NatEip.AllocationId
+      SubnetId: !Ref PublicSubnetA
+
+  PrivateDefaultRoute:
+    Type: AWS::EC2::Route
+    Condition: CreateNatGateway
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatGateway
+
+  PrivateSubnetARouteAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnetA
+      RouteTableId: !Ref PrivateRouteTable
+
+  PrivateSubnetBRouteAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnetB
+      RouteTableId: !Ref PrivateRouteTable
+
+  Cluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: !Sub ${EnvironmentName}-cluster
+
+  PublicAlbSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Public ALB security group
+      VpcId: !Ref Vpc
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+
+  PublicBackendSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Public backend security group
+      VpcId: !Ref Vpc
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: !Ref PublicBackendPort
+          ToPort: !Ref PublicBackendPort
+          SourceSecurityGroupId: !Ref PublicAlbSecurityGroup
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+
+  PrivateServiceSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Private ML service security group
+      VpcId: !Ref Vpc
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: !Ref PrivateMlPort
+          ToPort: !Ref PrivateMlPort
+          SourceSecurityGroupId: !Ref PrivateLoadBalancerSecurityGroup
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+
+  PublicLoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: !Sub ${EnvironmentName}-public-alb
+      Scheme: internet-facing
+      Type: application
+      Subnets:
+        - !Ref PublicSubnetA
+        - !Ref PublicSubnetB
+      SecurityGroups:
+        - !Ref PublicAlbSecurityGroup
+
+  PrivateLoadBalancerSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Private ALB security group
+      VpcId: !Ref Vpc
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: !Ref PrivateMlPort
+          ToPort: !Ref PrivateMlPort
+          SourceSecurityGroupId: !Ref PublicBackendSecurityGroup
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+
+  PrivateLoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: !Sub ${EnvironmentName}-private-alb
+      Scheme: internal
+      Type: application
+      Subnets:
+        - !Ref PrivateSubnetA
+        - !Ref PrivateSubnetB
+      SecurityGroups:
+        - !Ref PrivateLoadBalancerSecurityGroup
+
+  PublicTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: !Sub ${EnvironmentName}-public-tg
+      Port: !Ref PublicBackendPort
+      Protocol: HTTP
+      TargetType: ip
+      VpcId: !Ref Vpc
+      HealthCheckPath: /health
+
+  PrivateTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: !Sub ${EnvironmentName}-private-tg
+      Port: !Ref PrivateMlPort
+      Protocol: HTTP
+      TargetType: ip
+      VpcId: !Ref Vpc
+      HealthCheckPath: /health
+
+  PublicListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref PublicLoadBalancer
+      Port: 80
+      Protocol: HTTP
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref PublicTargetGroup
+
+  PrivateListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref PrivateLoadBalancer
+      Port: !Ref PrivateMlPort
+      Protocol: HTTP
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref PrivateTargetGroup
+
+  PublicTaskExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+
+  PublicTaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+
+  PrivateTaskExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+
+  PrivateTaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+
+  PublicLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /ecs/${EnvironmentName}/public-backend
+      RetentionInDays: 14
+
+  PrivateLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /ecs/${EnvironmentName}/private-ml
+      RetentionInDays: 14
+
+  PublicTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub ${EnvironmentName}-public-backend
+      Cpu: 1024
+      Memory: 2048
+      NetworkMode: awsvpc
+      RequiresCompatibilities: [FARGATE]
+      ExecutionRoleArn: !GetAtt PublicTaskExecutionRole.Arn
+      TaskRoleArn: !GetAtt PublicTaskRole.Arn
+      ContainerDefinitions:
+        - Name: public-backend
+          Image: !Ref PublicBackendImage
+          Essential: true
+          PortMappings:
+            - ContainerPort: !Ref PublicBackendPort
+          Environment:
+            - Name: LISTEN_URL
+              Value: !Sub http://0.0.0.0:${PublicBackendPort}
+            - Name: MONGO_DB_NAME
+              Value: !Ref MongodbDbName
+            - Name: GOOGLE_CLIENT_ID
+              Value: !Ref GoogleClientId
+            - Name: GOOGLE_REDIRECT_URI
+              Value: !Ref GoogleRedirectUri
+            - Name: JWT_ALGO
+              Value: !Ref JwtAlgo
+            - Name: JWT_EXPIRATION_SECONDS
+              Value: !Ref JwtExpirationSeconds
+            - Name: PRIVATE_LSTM_URL
+              Value: !Sub http://${PrivateLoadBalancer.DNSName}:${PrivateMlPort}
+            - Name: SDK_URL
+              Value: !Sub http://${PrivateLoadBalancer.DNSName}:${PrivateMlPort}
+            - Name: ML_SERVICE_USERNAME
+              Value: !Ref MlServiceUsername
+            - Name: MAIL_HOST
+              Value: !Ref MailHost
+            - Name: MAIL_PORT
+              Value: !Ref MailPort
+            - Name: MAIL_ENCRYPTION
+              Value: !Ref MailEncryption
+            - Name: MAIL_FROM_ADDRESS
+              Value: !Ref MailFromAddress
+            - Name: APP_NAME
+              Value: !Ref AppName
+            - Name: INVITE_EXPIRATION_DAYS
+              Value: !Ref InviteExpirationDays
+            - Name: BIOMETRIC_SECRET_KEY
+              Value: !Ref BiometricSecretKey
+            - Name: SERVICE_API_KEY
+              Value: !Ref ServiceApiKey
+          Secrets:
+            - Name: MONGO_URI
+              ValueFrom: !Ref MongoUri
+            - Name: GOOGLE_CLIENT_SECRET
+              ValueFrom: !Ref GoogleClientSecret
+            - Name: ML_SERVICE_PASSWORD
+              ValueFrom: !Ref MlServicePassword
+            - Name: MAIL_USERNAME
+              ValueFrom: !Ref MailUsername
+            - Name: MAIL_PASSWORD
+              ValueFrom: !Ref MailPassword
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref PublicLogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: ecs
+
+  PrivateTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub ${EnvironmentName}-private-ml
+      Cpu: 2048
+      Memory: 4096
+      NetworkMode: awsvpc
+      RequiresCompatibilities: [FARGATE]
+      ExecutionRoleArn: !GetAtt PrivateTaskExecutionRole.Arn
+      TaskRoleArn: !GetAtt PrivateTaskRole.Arn
+      ContainerDefinitions:
+        - Name: private-ml
+          Image: !Ref PrivateMlImage
+          Essential: true
+          PortMappings:
+            - ContainerPort: !Ref PrivateMlPort
+          Environment:
+            - Name: API_HOST
+              Value: 0.0.0.0
+            - Name: API_PORT
+              Value: !Ref PrivateMlPort
+            - Name: PUBLIC_GATEWAY_URL
+              Value: !Sub https://${ApiGateway}.execute-api.${AWS::Region}.amazonaws.com/${ApiStageName}
+            - Name: TLS_ENABLED
+              Value: 'false'
+            - Name: MODEL_PATH
+              Value: ./app/Entrenamineto_LSTM/embedding_network_mini.tflite
+            - Name: MONGO_DB_NAME
+              Value: !Ref MongodbDbName
+            - Name: RATE_LIMIT_REQUESTS
+              Value: '20'
+            - Name: RATE_LIMIT_WINDOW_SECONDS
+              Value: '60'
+            - Name: MAX_REQUEST_SIZE
+              Value: '102400'
+            - Name: MIN_STROKE_POINTS
+              Value: '100'
+            - Name: MAX_STROKE_POINTS
+              Value: '1200'
+            - Name: MODEL_INPUT_POINTS
+              Value: '100'
+            - Name: CONFIDENCE_THRESHOLD
+              Value: '0.7'
+            - Name: MODEL_SEQUENCE_LENGTH
+              Value: '100'
+            - Name: MODEL_FEATURES_PER_POINT
+              Value: '4'
+            - Name: ENVIRONMENT
+              Value: !Ref PrivateEnvironment
+            - Name: DEBUG
+              Value: 'false'
+            - Name: LOG_LEVEL
+              Value: !Ref LogLevel
+            - Name: ML_SERVICE_USERNAME
+              Value: !Ref MlServiceUsername
+            - Name: CLOUD_PROVIDER_ENDPOINT
+              Value: !Sub http://${PublicLoadBalancer.DNSName}:${PublicBackendPort}
+            - Name: CLOUD_SERVICE_URL
+              Value: !Sub https://${ApiGateway}.execute-api.${AWS::Region}.amazonaws.com/${ApiStageName}
+            - Name: SDK_API_KEY
+              Value: !Ref ServiceApiKey
+            - Name: SDK_SECRET
+              Value: !Ref ServiceApiKey
+            - Name: CORS_ORIGINS
+              Value: '*'
+            - Name: CORS_ALLOW_CREDENTIALS
+              Value: 'true'
+            - Name: VERIFY_CLIENT_CERTIFICATES
+              Value: 'false'
+          Secrets:
+            - Name: ML_SERVICE_PASSWORD
+              ValueFrom: !Ref MlServicePassword
+            - Name: MONGO_URI
+              ValueFrom: !Ref MongoUri
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref PrivateLogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: ecs
+
+  PublicService:
+    Type: AWS::ECS::Service
+    DependsOn:
+      - PublicListener
+    Properties:
+      ServiceName: !Sub ${EnvironmentName}-public-backend
+      Cluster: !Ref Cluster
+      DesiredCount: 2
+      LaunchType: FARGATE
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: ENABLED
+          SecurityGroups:
+            - !Ref PublicBackendSecurityGroup
+          Subnets:
+            - !Ref PublicSubnetA
+            - !Ref PublicSubnetB
+      LoadBalancers:
+        - ContainerName: public-backend
+          ContainerPort: !Ref PublicBackendPort
+          TargetGroupArn: !Ref PublicTargetGroup
+      TaskDefinition: !Ref PublicTaskDefinition
+
+  PrivateService:
+    Type: AWS::ECS::Service
+    DependsOn:
+      - PrivateListener
+    Properties:
+      ServiceName: !Sub ${EnvironmentName}-private-ml
+      Cluster: !Ref Cluster
+      DesiredCount: 2
+      LaunchType: FARGATE
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: DISABLED
+          SecurityGroups:
+            - !Ref PrivateServiceSecurityGroup
+          Subnets:
+            - !Ref PrivateSubnetA
+            - !Ref PrivateSubnetB
+      LoadBalancers:
+        - ContainerName: private-ml
+          ContainerPort: !Ref PrivateMlPort
+          TargetGroupArn: !Ref PrivateTargetGroup
+      TaskDefinition: !Ref PrivateTaskDefinition
+
+  ApiGateway:
+    Type: AWS::ApiGatewayV2::Api
+    Properties:
+      Name: !Sub ${EnvironmentName}-http-api
+      ProtocolType: HTTP
+
+  ApiGatewayIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref ApiGateway
+      IntegrationType: HTTP_PROXY
+      IntegrationMethod: ANY
+      IntegrationUri: !Sub http://${PublicLoadBalancer.DNSName}
+      PayloadFormatVersion: '1.0'
+      ConnectionType: INTERNET
+
+  ApiGatewayRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ApiGateway
+      RouteKey: $default
+      Target: !Sub integrations/${ApiGatewayIntegration}
+
+  ApiGatewayStage:
+    Type: AWS::ApiGatewayV2::Stage
+    Properties:
+      ApiId: !Ref ApiGateway
+      StageName: prod
+      AutoDeploy: true
+
+Outputs:
+  ApiGatewayUrl:
+    Value: !Sub https://${ApiGateway}.execute-api.${AWS::Region}.amazonaws.com/prod
+
+  PublicAlbDns:
+    Value: !GetAtt PublicLoadBalancer.DNSName
+
+  PrivateAlbDns:
+    Value: !GetAtt PrivateLoadBalancer.DNSName

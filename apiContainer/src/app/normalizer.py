@@ -1,0 +1,237 @@
+"""
+Biometric Data Normalizer - Padding and normalization logic
+"""
+from typing import List, Tuple, Dict, Any
+import math
+import numpy as np
+from .models import StrokePoint, NormalizationRequest
+from .config import get_settings
+
+settings = get_settings()
+
+
+def normalize_stroke(request: NormalizationRequest) -> Tuple[List[StrokePoint], Dict[str, Any]]:
+    """
+    Normalize stroke points by applying padding if necessary
+    
+    Args:
+        request: NormalizationRequest with stroke data
+        
+    Returns:
+        tuple: (normalized_points, features_dict)
+    """
+    points = request.stroke_points
+    num_points = len(points)
+    real_length = num_points  # Capturar longitud original antes del padding
+    
+    # Validar límites antes de procesar
+    if num_points < settings.MIN_STROKE_POINTS:
+        raise ValueError(f"Stroke too short: {num_points} points < minimum required {settings.MIN_STROKE_POINTS}")
+    elif num_points > settings.MAX_STROKE_POINTS:
+        raise ValueError(f"Too many points: {num_points} > {settings.MAX_STROKE_POINTS}")
+
+    if settings.NORMALIZATION_PROFILE.lower() == "repo_compat":
+        normalized = normalize_repo_compat(points, 400)
+        features = extract_features(normalized, request.stroke_duration_ms, real_length)
+        features["normalization_profile"] = "repo_compat"
+        features["target_length"] = 400
+        features["representation_strategy"] = "dtw_medoid"
+        return normalized, features
+
+    # Padding a MAX_STROKE_POINTS para estandarizar transporte
+    # Cloud service usa real_length para extraer solo datos reales
+    normalized = apply_padding(points, settings.MAX_STROKE_POINTS, "repeat_last")
+
+    features = extract_features(normalized, request.stroke_duration_ms, real_length)
+
+    return normalized, features
+
+
+def normalize_repo_compat(points: List[StrokePoint], target_count: int) -> List[StrokePoint]:
+    """
+    Normalize a stroke to the repo-compatible format used by the external LSTM.
+
+    Keeps the raw sequence structure and only rescales x/y robustly using percentiles.
+    Time is preserved as relative milliseconds and pressure is left in [0, 1].
+    """
+    if not points:
+        return []
+
+    cropped = list(points[:target_count])
+    if len(cropped) > target_count:
+        cropped = cropped[:target_count]
+
+    xs = np.array([p.x for p in cropped], dtype=float)
+    ys = np.array([p.y for p in cropped], dtype=float)
+    ts = np.array([p.t for p in cropped], dtype=float)
+    ps = np.array([p.p for p in cropped], dtype=float)
+
+    def _robust_scale(values: np.ndarray) -> np.ndarray:
+        low = np.percentile(values, 10)
+        high = np.percentile(values, 90)
+        if high <= low:
+            return np.zeros_like(values, dtype=float)
+        return np.clip((values - low) / (high - low), 0.0, 1.0)
+
+    xs = _robust_scale(xs)
+    ys = _robust_scale(ys)
+
+    ps = np.clip(ps, 0.0, 1.0)
+
+    normalized = [
+        StrokePoint(x=float(x), y=float(y), t=int(t), p=float(p))
+        for x, y, t, p in zip(xs, ys, ts, ps)
+    ]
+
+    while len(normalized) < target_count:
+        last = normalized[-1]
+        normalized.append(StrokePoint(x=last.x, y=last.y, t=last.t + 1, p=last.p))
+
+    return normalized[:target_count]
+
+
+def apply_padding(points: List[StrokePoint], target_count: int, strategy: str = "linear_interpolation") -> List[StrokePoint]:
+    """
+    Apply padding to stroke points if there are fewer than required
+    
+    Args:
+        points: Original stroke points
+        target_count: Target number of points
+        strategy: "linear_interpolation" or "repeat_last"
+        
+    Returns:
+        List[StrokePoint]: Padded points
+    """
+    if len(points) >= target_count:
+        return points
+    
+    if strategy == "linear_interpolation":
+        return linear_interpolation_padding(points, target_count)
+    elif strategy == "repeat_last":
+        return repeat_last_padding(points, target_count)
+    else:
+        raise ValueError(f"Unknown padding strategy: {strategy}")
+
+
+def linear_interpolation_padding(points: List[StrokePoint], target_count: int) -> List[StrokePoint]:
+
+    if len(points) == 1:
+        
+        return [StrokePoint(x=points[0].x, y=points[0].y, t=points[0].t, p=points[0].p) for _ in range(target_count)]
+    
+    current_count = len(points)
+    needed = target_count - current_count
+    
+    if needed <= 0:
+        return points[:target_count]
+    
+    
+    num_segments = len(points) - 1
+    points_per_segment = needed // num_segments
+    extra_points = needed % num_segments
+    
+    padded = []
+    for i in range(len(points) - 1):
+        padded.append(points[i])
+        
+        
+        num_to_insert = points_per_segment + (1 if i < extra_points else 0)
+        
+        if num_to_insert > 0:
+            p1 = points[i]
+            p2 = points[i + 1]
+            
+            for j in range(1, num_to_insert + 1):
+                t = j / (num_to_insert + 1)
+                x = p1.x + (p2.x - p1.x) * t
+                y = p1.y + (p2.y - p1.y) * t
+                time = int(p1.t + (p2.t - p1.t) * t)
+                pressure = p1.p + (p2.p - p1.p) * t
+                
+                padded.append(StrokePoint(x=x, y=y, t=time, p=pressure))
+    
+    padded.append(points[-1])
+    
+    
+    while len(padded) < target_count:
+        last = padded[-1]
+        padded.append(StrokePoint(x=last.x, y=last.y, t=last.t + 1, p=last.p))
+    
+    return padded[:target_count]
+
+
+def repeat_last_padding(points: List[StrokePoint], target_count: int) -> List[StrokePoint]:
+    """
+    Pad by repeating the last point (simple padding)
+    Creates new StrokePoint instances with incremented time
+    """
+    padded = list(points)
+    if not padded:
+        return []
+    
+    last_point = padded[-1]
+    time_increment = 1
+    
+    while len(padded) < target_count:
+        padded.append(StrokePoint(
+            x=last_point.x,
+            y=last_point.y,
+            t=last_point.t + time_increment,
+            p=last_point.p
+        ))
+        time_increment += 1
+    
+    return padded[:target_count]
+
+
+def extract_features(points: List[StrokePoint], duration_ms: int, real_length: int) -> Dict[str, Any]:
+    """
+    Extract biometric features from normalized stroke
+    
+    Args:
+        points: Normalized stroke points
+        duration_ms: Total stroke duration in milliseconds
+        real_length: Original number of points before padding
+        
+    Returns:
+        dict: Feature dictionary
+    """
+    if not points or len(points) < 2:
+        return {
+            "num_points": len(points),
+            "real_length": real_length,
+            "total_distance": 0.0,
+            "velocity_mean": 0.0,
+            "velocity_max": 0.0,
+            "duration_ms": duration_ms,
+        }
+    
+    
+    total_distance = 0.0
+    velocities = []
+    
+    for i in range(1, len(points)):
+        dx = points[i].x - points[i-1].x
+        dy = points[i].y - points[i-1].y
+        distance = math.sqrt(dx**2 + dy**2)
+        total_distance += distance
+        
+        
+        time_diff_ms = points[i].t - points[i-1].t
+        if time_diff_ms > 0:
+            time_diff_s = time_diff_ms / 1000.0
+            velocity = distance / time_diff_s
+            velocities.append(velocity)
+    
+    
+    velocity_mean = sum(velocities) / len(velocities) if velocities else 0.0
+    velocity_max = max(velocities) if velocities else 0.0
+    
+    return {
+        "num_points": len(points),
+        "real_length": real_length,
+        "total_distance": round(total_distance, 2),
+        "velocity_mean": round(velocity_mean, 2),
+        "velocity_max": round(velocity_max, 2),
+        "duration_ms": duration_ms,
+    }
