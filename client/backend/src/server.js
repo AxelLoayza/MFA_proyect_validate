@@ -17,7 +17,7 @@ function parseListenUrl(listenUrl) {
   return { host, port };
 }
 
-const LISTEN_URL = process.env.LISTEN_URL ;
+const LISTEN_URL = process.env.LISTEN_URL || `http://0.0.0.0:${process.env.PORT || 4000}`;
 const { host: HOST, port: PORT } = parseListenUrl(LISTEN_URL);
 const LISTEN_HOST = HOST === '0.0.0.0' || HOST === '::' ? undefined : HOST;
 
