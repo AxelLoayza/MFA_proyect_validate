@@ -170,12 +170,16 @@ Resources:
           #!/bin/bash
           set -euxo pipefail
           dnf update -y
-          dnf install -y git dnf-plugins-core
-          # Docker CE oficial (incluye docker-buildx-plugin y docker-compose-plugin)
-          dnf config-manager --add-repo https://download.docker.com/linux/rhel/docker-ce.repo
-          dnf install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+          dnf install -y git
+          # Docker desde el repositorio nativo de Amazon Linux 2023 (compatible con AL2023)
+          dnf install -y docker
           systemctl enable --now docker
           usermod -aG docker ec2-user
+          # Docker Compose plugin (binario oficial, version estable)
+          mkdir -p /usr/local/lib/docker/cli-plugins
+          curl -SL "https://github.com/docker/compose/releases/download/v2.27.0/docker-compose-linux-x86_64" \
+            -o /usr/local/lib/docker/cli-plugins/docker-compose
+          chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
           # Clonar solo cloud_service para reducir peso y tiempo de despliegue
           sudo -u ec2-user bash -c 'if [ ! -d /home/ec2-user/app/.git ]; then git clone --depth 1 --filter=blob:none --sparse ${RepoUrl} /home/ec2-user/app; fi'
           sudo -u ec2-user bash -c 'cd /home/ec2-user/app && git sparse-checkout set cloud_service && git checkout main'
