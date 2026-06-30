@@ -15,9 +15,7 @@ src/keys/*.pem
 src/keys/jwt_private.pem
 
 # Configuration files with sensitive data
-**/config/cloud_keys.js
 **/config/database.js
-src/config/cloud_keys.js
 
 # ============================================================================
 # TEST & DEVELOPMENT SCRIPTS - CONTAIN CREDENTIALS/SENSITIVE DATA
