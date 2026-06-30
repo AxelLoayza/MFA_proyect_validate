@@ -1,14 +1,22 @@
 
-const { createRemoteJWKSet, jwtVerify } = require('jose');
+// jose v5+ is pure ESM - use dynamic import() instead of require()
 const { CLOUD_JWKS_URL, CLOUD_ISSUER, CLOUD_AUDIENCE } = require('../config/cloud_keys');
 const logger = require('../config/logger');
 
-let JWKS;
-try {
-  JWKS = createRemoteJWKSet(new URL(CLOUD_JWKS_URL));
-} catch (err) {
-  logger.warn('createRemoteJWKSet initialization failed:', err.message);
-  JWKS = null;
+let JWKS = null;
+let _jwtVerify = null;
+
+async function _initJose() {
+  if (_jwtVerify) return;
+  try {
+    const jose = await import('jose');
+    JWKS = jose.createRemoteJWKSet(new URL(CLOUD_JWKS_URL));
+    _jwtVerify = jose.jwtVerify;
+  } catch (err) {
+    logger.warn('JOSE initialization failed:', err.message);
+    JWKS = null;
+    _jwtVerify = null;
+  }
 }
 
 /**
@@ -20,11 +28,12 @@ try {
  * Retorna payload si es válido, lanza error en caso contrario.
  */
 async function verifyAssertion(signedAssertion, { expectedLoginId = null, maxAgeSeconds = 120 } = {}) {
-  if (!JWKS) {
+  await _initJose();
+  if (!JWKS || !_jwtVerify) {
     throw new Error('JWKS not configured or invalid');
   }
   try {
-    const { payload, protectedHeader } = await jwtVerify(
+    const { payload, protectedHeader } = await _jwtVerify(
       signedAssertion,
       JWKS,
       {
