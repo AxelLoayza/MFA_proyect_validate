@@ -5,7 +5,7 @@ const logger = require('../config/logger');
 const axios = require('axios');
 const pool = require('../config/database');
 const TokenService = require('../services/token.service');
-const { v4: uuidv4 } = require('uuid');
+const { randomUUID: uuidv4 } = require('crypto');
 
 function parsePositiveInt(value, fallback) {
   const parsed = parseInt(value, 10);

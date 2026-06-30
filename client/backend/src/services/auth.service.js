@@ -3,7 +3,7 @@ const pool = require('../config/database');
 const TokenService = require('./token.service');
 const userService = require('./user.service');
 const { verifyAssertion } = require('./cloudScoring.service');
-const { v4: uuidv4 } = require('uuid');
+const { randomUUID: uuidv4 } = require('crypto');
 const logger = require('../config/logger');
 const sessionModel = require('../models/session.model');
 
